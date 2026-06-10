@@ -1,0 +1,54 @@
+stage: student_world_model_structured_toy_tiny_training
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/structured_toy
+  importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/structured_toy_teacher
+  token_shard_glob: tokens_shard_*.pt
+  importance_shard_glob: importance_shard_*.pt
+  split: structured_toy
+  require_key_token_mask: true
+
+selector:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/student_selector_structured_toy_v1/checkpoints/student_selector_step_000200.pt
+  frozen: true
+
+compressor:
+  token_dim: 768
+  latent_dim: 128
+  num_latents: 8
+  hidden_dim: 256
+  dropout: 0.0
+  compressor_type: perceiver_like
+  num_heads: 8
+
+student_world_model:
+  latent_dim: 128
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  pool: mean
+
+teacher_reference:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/teacher_structured_toy_tiny_v1/checkpoints/teacher_world_model_step_000100.pt
+
+training:
+  device: cuda_if_available
+  batch_size: 8
+  max_steps: 300
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  log_every: 10
+  checkpoint_every: 300
+  max_grad_norm: 1.0
+  topk: 4
+  use_sigmoid_scores: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: student_world_model_structured_toy_v1
+  save_checkpoint: true
+  save_metrics: true
