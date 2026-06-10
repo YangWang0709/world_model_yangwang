@@ -128,11 +128,11 @@ This includes the original Step 2 tests and the new Step 3 dataset, shard, and e
 
 ## 9. Git Commit
 
-- Repository: `YangWang0709/VLA-yangwang`
+- Repository: `YangWang0709/world_model_yangwang`
 - Branch: `feature/tgpawb-step3-token-extraction`
 - Commit message: `feat(tgpawb): add token extraction pipeline`
-- Commit hash: recorded after commit in `STEP3_LOCAL_SUMMARY.md` and the final user response.
-- Remote push status: recorded after push attempt in `STEP3_LOCAL_SUMMARY.md` and the final user response.
+- Initial implementation commit hash: `5d6d9b492c84c8b94e044693aa3808eb1d97fde3`
+- Remote push status: pushed to `git@github.com:YangWang0709/world_model_yangwang.git`
 
 ## 10. What Was Not Done
 
@@ -148,4 +148,3 @@ This includes the original Step 2 tests and the new Step 3 dataset, shard, and e
 ## 11. Next Step Recommendation
 
 Recommended Step 4: implement the real full-token `TeacherWorldModel` training script, but first use dummy token shards for a 10-step tiny overfit or sanity run. After that, connect a real frozen encoder path while preserving the Step 3 token shard reader contract.
-
