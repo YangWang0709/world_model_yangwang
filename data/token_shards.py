@@ -82,6 +82,21 @@ def validate_token_shard(shard_dict: dict[str, Any], strict: bool = True) -> boo
                 f"{list_key} length {len(value)} must match batch size {batch_size}"
             )
 
+    aux_labels = shard_dict.get("aux_labels")
+    if aux_labels is not None:
+        if not isinstance(aux_labels, dict):
+            raise TypeError("aux_labels must be a dict when present")
+        key_token_mask = aux_labels.get("key_token_mask")
+        if key_token_mask is not None:
+            if not isinstance(key_token_mask, torch.Tensor):
+                raise TypeError("aux_labels.key_token_mask must be a torch.Tensor")
+            expected_shape = past_tokens.shape[:2]
+            if key_token_mask.shape != expected_shape:
+                raise ValueError(
+                    "aux_labels.key_token_mask must have shape [B, N], "
+                    f"got {tuple(key_token_mask.shape)} expected {tuple(expected_shape)}"
+                )
+
     if strict:
         if not isinstance(shard_dict["encoder_config"], dict):
             raise TypeError("encoder_config must be a dict")
@@ -126,4 +141,3 @@ def summarize_token_shard(shard_dict: dict[str, Any]) -> dict[str, Any]:
         "future_tokens_rank": int(shard_dict["future_tokens"].ndim),
         "split": shard_dict["split"],
     }
-

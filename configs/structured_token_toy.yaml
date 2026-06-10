@@ -1,0 +1,19 @@
+stage: structured_token_toy_generation
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  num_samples: 32
+  num_tokens: 196
+  token_dim: 768
+  num_key_tokens: 4
+  split: structured_toy
+  signal_scale: 3.0
+  noise_scale: 0.05
+  shard_size: 8
+  token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/structured_toy
+
+output:
+  token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/structured_toy
+  summary_path: /home/ubuntu22/tgpawb_world_model/data/token_shards/structured_toy/structured_token_summary.json
+  overwrite: true

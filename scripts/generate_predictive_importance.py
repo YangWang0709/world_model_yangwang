@@ -105,6 +105,19 @@ def _load_teacher(checkpoint_path: str | Path, config_override: dict[str, Any] |
     return model, model_config
 
 
+def resolve_teacher_checkpoint(path: str | Path) -> Path:
+    """Resolve a configured checkpoint path, falling back to the latest run checkpoint."""
+
+    checkpoint_path = Path(path)
+    if checkpoint_path.exists():
+        return checkpoint_path
+    checkpoint_dir = checkpoint_path.parent
+    candidates = sorted(checkpoint_dir.glob("teacher_world_model_step_*.pt"))
+    if candidates:
+        return candidates[-1]
+    raise FileNotFoundError(f"Teacher checkpoint not found: {checkpoint_path}")
+
+
 def per_sample_mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """Return MSE per sample as shape [B]."""
 
@@ -217,7 +230,7 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = resolve_device(str(importance_cfg.get("device", "cuda_if_available")))
-    teacher_checkpoint = Path(teacher_cfg["checkpoint"])
+    teacher_checkpoint = resolve_teacher_checkpoint(teacher_cfg["checkpoint"])
     teacher_model, teacher_model_config = _load_teacher(
         teacher_checkpoint,
         config_override=teacher_cfg.get("config"),
