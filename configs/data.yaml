@@ -1,0 +1,9 @@
+dataset_name: dummy_video_dataset
+num_samples: 8
+clip_len: 4
+image_size: 224
+patch_grid_h: 14
+patch_grid_w: 14
+token_dim: 768
+future_horizon: 1
+

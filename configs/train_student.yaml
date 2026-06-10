@@ -1,0 +1,6 @@
+stage: student_smoke_only
+batch_size: 2
+num_steps: 2
+learning_rate: 0.0001
+no_real_training_in_step2: true
+

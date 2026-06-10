@@ -1,0 +1,18 @@
+video_encoder: dummy
+token_dim: 768
+num_tokens: 196
+teacher:
+  hidden_dim: 512
+  num_layers: 2
+student:
+  keep_ratio: 0.2
+  topk_tokens: 40
+  compressed_tokens: 16
+  hidden_dim: 512
+selector:
+  hidden_dim: 256
+compressor:
+  type: perceiver_like
+  num_latents: 16
+  latent_dim: 512
+

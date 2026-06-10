@@ -1,50 +1,21 @@
-# Large scene bundles
-scenes/primary_building_scene_repaired/
-assets/unitree_go2/
-robots/unitree_go2/
-scenes/unitree_go2/
-
-# USD / 3D assets
-*.usd
-*.usdc
-*.usda
-*.dae
-*.stl
-*.obj
-*.fbx
-*.mtl
-
-# Mesh/texture dirs
-**/*go2*/meshes/
-**/*go2*/textures/
-**/dependencies/
-
-# Large data
-*.npz
-*.hdf5
-*.h5
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+runs/
+outputs/
+checkpoints/
+data/raw/
+data/processed/
+data/toy_videos/
+data/token_shards/
 *.pt
 *.pth
 *.ckpt
-*.png
-*.jpg
-*.jpeg
-*.exr
-
-# Cores/log dumps
-core
-core.*
-*.core
-runs/**/raw/
-runs/**/sensor_raw/
-runs/**/large/
-
-# Secrets and local runtime state
-.env
-*.pem
-*.key
-*token*
-*secret*
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
+*.safetensors
+*.log
+.DS_Store
+.pytest_cache/

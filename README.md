@@ -1,28 +1,29 @@
-# Go2-VLM-LA Explorer
+# Task-Grounded Predictive Attention Bottleneck for Efficient World Models
 
-Workspace: `/home/ubuntu22/VLA`
+This project studies task-grounded predictive token selection for efficient world models.
 
-Research line: Go2-VLM-LA Explorer for 3D Active Exploration.
+The goal is to select visual tokens that are task-relevant and useful for future latent prediction under limited token, latency, and memory budgets.
 
-The project starts from an Isaac Sim USD indoor scene that is expected to already contain a Unitree Go2 robot. The main loop is:
+## Phase 1 Scope
 
-```text
-USD scene with existing Unitree Go2
--> Go2 pose / robot state
--> RGB-D / depth / pointcloud / LiDAR or proxy observation
--> explored_map / partial map
--> candidate viewpoints
--> BEV render with candidate IDs
--> VLM language output: Go to candidate <id>.
--> LA parser extracts candidate id
--> candidate table maps id to target viewpoint pose
--> planner / Go2 movement wrapper executes the target
-```
+Phase 1 is limited to:
 
-Output contract:
+1. Dataset loader.
+2. Frozen video encoder token extraction.
+3. Full-token teacher world model.
+4. Attention student.
+5. Baseline evaluation.
+6. Visualization.
 
-```text
-Go to candidate <id>.
-```
+## Current Step 2 Scope
 
-Phase 0 is initialization only. No VLM training, RL, map_predict training, Go2 locomotion training, PI/openpi action-head fine-tuning, rollout, or scene-bundle commit is allowed in this phase.
+Step 2 only creates the engineering skeleton and a minimal smoke test.
+
+This step does not include:
+
+- Large model downloads.
+- Training.
+- Dataset downloads.
+- V-JEPA, VideoMAE, or VLM weight downloads.
+- Modifications to existing `/home/ubuntu22/VLA`, `/home/ubuntu22/MapExRL`, or `/home/ubuntu22/test_gpt` code.
+

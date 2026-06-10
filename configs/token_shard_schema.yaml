@@ -1,0 +1,16 @@
+schema_version: "0.1.0"
+required_keys:
+  - schema_version
+  - encoder_name
+  - encoder_config
+  - created_at
+  - split
+  - sample_ids
+  - task_texts
+  - past_tokens
+  - future_tokens
+  - metadata
+tensor_shapes:
+  past_tokens: "[B, N, D]"
+  future_tokens: "[B, N, D] or [B, D]"
+

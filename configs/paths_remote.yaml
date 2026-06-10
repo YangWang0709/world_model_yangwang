@@ -1,0 +1,6 @@
+project_root: /home/ubuntu22/tgpawb_world_model
+context_dir: /home/ubuntu22/tgpawb_world_model_context
+data_root: /home/ubuntu22/tgpawb_world_model/data
+token_shard_root: /home/ubuntu22/tgpawb_world_model/data/token_shards
+run_root: /home/ubuntu22/tgpawb_world_model/runs
+
