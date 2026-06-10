@@ -19,3 +19,7 @@ data/token_shards/
 *.log
 .DS_Store
 .pytest_cache/
+wandb/
+tensorboard/
+*.sqlite
+*.db
