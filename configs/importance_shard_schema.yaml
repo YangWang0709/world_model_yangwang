@@ -1,0 +1,22 @@
+schema_version: "0.1.0"
+required_keys:
+  - schema_version
+  - importance_method
+  - teacher_checkpoint
+  - teacher_config
+  - source_token_shard
+  - created_at
+  - split
+  - sample_ids
+  - task_texts
+  - importance_scores
+  - importance_scores_norm
+  - base_losses
+  - masked_losses
+  - metadata
+  - mask_config
+tensor_shapes:
+  importance_scores: "[B, N]"
+  importance_scores_norm: "[B, N]"
+  base_losses: "[B]"
+  masked_losses: "[B, N]"

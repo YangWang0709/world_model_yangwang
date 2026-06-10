@@ -12,6 +12,7 @@ data/raw/
 data/processed/
 data/toy_videos/
 data/token_shards/
+data/importance_shards/
 *.pt
 *.pth
 *.ckpt
