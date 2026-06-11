@@ -133,20 +133,62 @@ def initialize_context_selector_from_state_checkpoint(
 ) -> bool:
     """Copy compatible AttentionSelector weights into context/state branches."""
 
+    report = initialize_context_selector_from_state_checkpoint_with_report(
+        selector,
+        checkpoint_path,
+        allow_random_init_if_incompatible=allow_random_init_if_incompatible,
+    )
+    return bool(report["initialized_from_state_selector"])
+
+
+def initialize_context_selector_from_state_checkpoint_with_report(
+    selector: UnifiedPredictiveImportanceSelector,
+    checkpoint_path: str | Path,
+    allow_random_init_if_incompatible: bool = True,
+) -> dict[str, Any]:
+    """Copy compatible legacy selector weights and return a JSON-safe report."""
+
+    report: dict[str, Any] = {
+        "initialized_from_state_selector": False,
+        "checkpoint_path": str(checkpoint_path),
+        "loaded_compatible_key_count": 0,
+        "total_legacy_key_count": 0,
+        "missing_keys": [],
+        "unexpected_keys": [],
+        "incompatible_keys": [],
+        "error": None,
+    }
     try:
         checkpoint = load_student_selector_checkpoint(checkpoint_path, map_location="cpu")
         legacy = AttentionSelector(**checkpoint["model_config"])
-        legacy.load_state_dict(checkpoint["model_state_dict"])
-        selector.state_legacy_selector.load_state_dict(legacy.state_dict(), strict=False)
+        legacy_load = legacy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        report["missing_keys"] = list(getattr(legacy_load, "missing_keys", []))
+        report["unexpected_keys"] = list(getattr(legacy_load, "unexpected_keys", []))
+        legacy_state = legacy.state_dict()
+        report["total_legacy_key_count"] = len(legacy_state)
+        selector.state_legacy_selector.load_state_dict(legacy_state, strict=False)
         context_state = selector.context_selector.state_dict()
+        incompatible = [
+            key
+            for key, value in legacy_state.items()
+            if key in context_state and tuple(context_state[key].shape) != tuple(value.shape)
+        ]
         compatible = {
             key: value
-            for key, value in legacy.state_dict().items()
+            for key, value in legacy_state.items()
             if key in context_state and tuple(context_state[key].shape) == tuple(value.shape)
         }
+        missing_from_legacy = [key for key in context_state if key not in legacy_state]
+        unexpected_for_context = [key for key in legacy_state if key not in context_state]
         selector.context_selector.load_state_dict({**context_state, **compatible}, strict=False)
-        return bool(compatible)
-    except Exception:
+        report["loaded_compatible_key_count"] = len(compatible)
+        report["missing_keys"] = sorted(set(report["missing_keys"] + missing_from_legacy))
+        report["unexpected_keys"] = sorted(set(report["unexpected_keys"] + unexpected_for_context))
+        report["incompatible_keys"] = sorted(incompatible)
+        report["initialized_from_state_selector"] = bool(compatible)
+        return report
+    except Exception as exc:
+        report["error"] = repr(exc)
         if allow_random_init_if_incompatible:
-            return False
+            return report
         raise

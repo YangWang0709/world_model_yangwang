@@ -182,6 +182,8 @@ def render_context_bottleneck_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Baselines",
         "",
+        "`full_context_teacher_reference` is a non-deployable teacher reference that uses full historical context; it is not a learned bottleneck policy.",
+        "",
         "| policy | seeds | n | mse_mean | mse_std | selected_context_importance | topK_overlap |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]

@@ -23,6 +23,7 @@ from models.unified_predictive_importance_selector import (
     UnifiedPredictiveImportanceSelector,
     build_unified_selector_from_config,
     initialize_context_selector_from_state_checkpoint,
+    initialize_context_selector_from_state_checkpoint_with_report,
 )
 from training.losses import importance_topk_metrics
 from training.teacher_trainer import grad_norm, resolve_device
@@ -63,6 +64,7 @@ def save_unified_selector_checkpoint(path: str | Path, model: UnifiedPredictiveI
             "metrics_summary": summary,
             "trained_mode": "context",
             "trained_current_importance": False,
+            "init_report": summary.get("init_report", {}),
         },
         out,
     )
@@ -129,12 +131,23 @@ class UnifiedContextSelectorTrainer:
         self.model = build_unified_selector_from_config(self.model_config).to(self.device)
         init_cfg = config.get("init", {})
         self.initialized_from_state_selector = False
+        self.init_report: dict[str, Any] = {
+            "initialized_from_state_selector": False,
+            "checkpoint_path": str(init_cfg.get("state_selector_checkpoint", "")),
+            "loaded_compatible_key_count": 0,
+            "total_legacy_key_count": 0,
+            "missing_keys": [],
+            "unexpected_keys": [],
+            "incompatible_keys": [],
+            "error": None,
+        }
         if bool(init_cfg.get("init_from_state_selector", False)):
-            self.initialized_from_state_selector = initialize_context_selector_from_state_checkpoint(
+            self.init_report = initialize_context_selector_from_state_checkpoint_with_report(
                 self.model,
                 init_cfg["state_selector_checkpoint"],
                 allow_random_init_if_incompatible=bool(init_cfg.get("allow_random_init_if_incompatible", True)),
             )
+            self.initialized_from_state_selector = bool(self.init_report["initialized_from_state_selector"])
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=float(train_cfg["learning_rate"]), weight_decay=float(train_cfg["weight_decay"]))
         self.max_steps = int(train_cfg["max_steps"])
         self.alpha = float(train_cfg.get("alpha", 2.0))
@@ -183,6 +196,7 @@ class UnifiedContextSelectorTrainer:
             "run_dir": str(self.run_dir),
             "device": str(self.device),
             "initialized_from_step15_selector": bool(self.initialized_from_state_selector),
+            "init_report": self.init_report,
             "trained_mode": "context",
             "trained_current_importance": False,
             "train_state_mode": False,

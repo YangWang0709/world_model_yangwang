@@ -1,0 +1,27 @@
+stage: step17_code_audit_patch
+project_root: /home/ubuntu22/tgpawb_world_model
+run_name: code_audit_step17_context_bottleneck_v1
+
+inputs:
+  step17_config: configs/context_bottleneck_bair_1000_128.yaml
+  train_unified_selector_config: configs/train_unified_context_selector_bair_1000_128.yaml
+  context_importance_config: configs/generate_context_importance_bair_1000_128.yaml
+  baseline_aggregate: runs/context_bottleneck_baseline_bair_1000_128_v1/baseline_aggregate.json
+  baseline_report: runs/context_bottleneck_baseline_bair_1000_128_v1/baseline_aggregate.md
+
+audit:
+  require_context_only_occlusion: true
+  require_keep_current_full: true
+  require_no_current_token_drop: true
+  require_no_current_importance_training: true
+  require_no_action_input: true
+  require_no_vlm: true
+  require_no_rl: true
+  require_full_context_teacher_reference: true
+  require_gitignore_blacklist: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: code_audit_step17_context_bottleneck_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/code_audit_step17_context_bottleneck_v1/code_audit_step17_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/code_audit_step17_context_bottleneck_v1/code_audit_step17_summary.md

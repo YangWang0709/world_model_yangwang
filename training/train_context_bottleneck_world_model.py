@@ -165,6 +165,55 @@ def evaluate_context_bottleneck_model(
     return metrics
 
 
+def evaluate_full_context_teacher_reference(
+    teacher: ContextTeacherWorldModel,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    seed: int = 0,
+    run_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Evaluate the non-deployable full-context teacher reference directly."""
+
+    teacher.eval()
+    sse = 0.0
+    count = 0
+    with torch.no_grad():
+        for batch in loader:
+            context = batch["context_tokens"].to(device)
+            current = batch["current_tokens"].to(device)
+            future = batch["future_tokens"].to(device)
+            target = future_target_from_tokens(future)
+            pred = teacher(context, current)
+            sse += float((pred - target).pow(2).sum().item())
+            count += int(target.numel())
+    mse = sse / float(max(count, 1))
+    out_dir = Path(run_dir) if run_dir is not None else None
+    return {
+        "success": True,
+        "policy": "full_context_teacher_reference",
+        "seed": int(seed),
+        "num_steps": 0,
+        "future_mse": float(mse),
+        "student_future_mse": float(mse),
+        "context_teacher_mse": float(mse),
+        "student_teacher_ratio": 1.0,
+        "is_teacher_reference": True,
+        "trainable_student": False,
+        "deployable_policy": False,
+        "context_topK": None,
+        "context_retention_ratio": None,
+        "selected_context_importance_mean": None,
+        "selector_target_topk_overlap": None,
+        "selected_vs_random_context_importance_gap": None,
+        "current_tokens_dropped": False,
+        "trained_current_importance": False,
+        "trained_context_importance": True,
+        "run_dir": str(out_dir) if out_dir is not None else "",
+        "summary_path": str(out_dir / "summary.json") if out_dir is not None else "",
+    }
+
+
 class ContextBottleneckTrainer:
     def __init__(self, config: dict[str, Any], *, policy: str | None = None, seed: int | None = None, run_dir: str | Path | None = None) -> None:
         self.config = config
@@ -290,6 +339,16 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         values = [float(item["student_future_mse"]) for item in items if item.get("student_future_mse") is not None]
         if not values:
             continue
+        selected_values = [
+            float(item["selected_context_importance_mean"])
+            for item in items
+            if item.get("selected_context_importance_mean") is not None
+        ]
+        topk_values = [
+            float(item["selector_target_topk_overlap"])
+            for item in items
+            if item.get("selector_target_topk_overlap") is not None
+        ]
         agg_rows.append(
             {
                 "policy": policy,
@@ -297,8 +356,10 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "n": len(values),
                 "student_future_mse_mean": float(torch.tensor(values).mean().item()),
                 "student_future_mse_std": float(torch.tensor(values).std(unbiased=False).item()) if len(values) > 1 else 0.0,
-                "selected_context_importance_mean": float(torch.tensor([float(item.get("selected_context_importance_mean") or 0.0) for item in items]).mean().item()),
-                "selector_target_topk_overlap_mean": float(torch.tensor([float(item.get("selector_target_topk_overlap") or 0.0) for item in items]).mean().item()),
+                "selected_context_importance_mean": float(torch.tensor(selected_values).mean().item()) if selected_values else None,
+                "selector_target_topk_overlap_mean": float(torch.tensor(topk_values).mean().item()) if topk_values else None,
+                "is_teacher_reference": bool(any(item.get("is_teacher_reference", False) for item in items)),
+                "deployable_policy": bool(all(item.get("deployable_policy", True) for item in items)),
             }
         )
     return {"rows": rows, "aggregate": agg_rows}
@@ -312,6 +373,13 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow({col: row.get(col) for col in columns})
+
+
+def _fmt_metric(value: Any, precision: int = 6) -> str:
+    try:
+        return f"{float(value):.{precision}f}"
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def run_context_bottleneck_baselines(config: dict[str, Any]) -> dict[str, Any]:
@@ -338,34 +406,28 @@ def run_context_bottleneck_baselines(config: dict[str, Any]) -> dict[str, Any]:
             ContextBottleneckTrainer(config, policy=policy, seed=seed, run_dir=out).train()
     rows = _read_rows(run_dir)
     if "full_context_teacher_reference" in policies and not any(row.get("policy") == "full_context_teacher_reference" for row in rows):
-        teacher_mse = next((row.get("context_teacher_mse") for row in rows if row.get("context_teacher_mse") is not None), None)
-        if teacher_mse is not None:
-            teacher_dir = run_dir / "full_context_teacher_reference_seed0"
-            teacher_dir.mkdir(parents=True, exist_ok=True)
-            teacher_row = {
-                "success": True,
-                "policy": "full_context_teacher_reference",
-                "seed": 0,
-                "num_steps": 0,
-                "student_future_mse": float(teacher_mse),
-                "future_mse": float(teacher_mse),
-                "context_teacher_mse": float(teacher_mse),
-                "student_teacher_ratio": 1.0,
-                "selected_context_importance_mean": None,
-                "selector_target_topk_overlap": None,
-                "current_tokens_dropped": False,
-                "run_dir": str(teacher_dir),
-                "summary_path": str(teacher_dir / "summary.json"),
-            }
-            (teacher_dir / "summary.json").write_text(json.dumps(teacher_row, indent=2), encoding="utf-8")
-            rows.append(teacher_row)
+        teacher_dir = run_dir / "full_context_teacher_reference_seed0"
+        teacher_dir.mkdir(parents=True, exist_ok=True)
+        dataset = _dataset(config, "test")
+        loader = DataLoader(dataset, batch_size=int(config["training"]["batch_size"]), shuffle=False, num_workers=0, collate_fn=context_selector_collate_fn)
+        device = resolve_device(str(config["training"].get("device", "cuda_if_available")))
+        teacher, _ = load_context_teacher_checkpoint(config["teacher_reference"]["checkpoint"], device)
+        for parameter in teacher.parameters():
+            parameter.requires_grad = False
+        teacher_row = evaluate_full_context_teacher_reference(teacher, loader, device, seed=0, run_dir=teacher_dir)
+        (teacher_dir / "summary.json").write_text(json.dumps(teacher_row, indent=2), encoding="utf-8")
+        rows.append(teacher_row)
     aggregate = _aggregate(rows)
     (run_dir / "baseline_summary.json").write_text(json.dumps({"rows": rows}, indent=2), encoding="utf-8")
     (run_dir / "baseline_aggregate.json").write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
     _write_csv(run_dir / "baseline_aggregate.csv", aggregate["aggregate"])
     lines = ["# Step17 Context Bottleneck Baseline Aggregate", "", "| policy | seeds | n | mse_mean | mse_std | selected_importance | topK_overlap |", "| --- | --- | ---: | ---: | ---: | ---: | ---: |"]
     for row in sorted(aggregate["aggregate"], key=lambda item: float(item["student_future_mse_mean"])):
-        lines.append(f"| {row['policy']} | {row['seeds']} | {row['n']} | {row['student_future_mse_mean']:.8f} | {row['student_future_mse_std']:.8f} | {row['selected_context_importance_mean']:.6f} | {row['selector_target_topk_overlap_mean']:.6f} |")
+        lines.append(
+            f"| {row['policy']} | {row['seeds']} | {row['n']} | {row['student_future_mse_mean']:.8f} | "
+            f"{row['student_future_mse_std']:.8f} | {_fmt_metric(row.get('selected_context_importance_mean'))} | "
+            f"{_fmt_metric(row.get('selector_target_topk_overlap_mean'))} |"
+        )
     (run_dir / "baseline_aggregate.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (run_dir / "baseline_summary.csv").write_text((run_dir / "baseline_aggregate.csv").read_text(encoding="utf-8"), encoding="utf-8")
     (run_dir / "baseline_summary.md").write_text((run_dir / "baseline_aggregate.md").read_text(encoding="utf-8"), encoding="utf-8")

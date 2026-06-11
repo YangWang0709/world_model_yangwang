@@ -126,6 +126,8 @@ def write_partial_summary(
     error: str | None = None,
     resource: dict[str, Any] | None = None,
 ) -> Path:
+    if str(PROJECT_ROOT) in str(Path(run_dir)) and not is_step17_owned_output_path(run_dir):
+        raise ValueError(f"Refusing partial summary outside Step17-owned output path: {run_dir}")
     path = Path(run_dir) / "partial_summary.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
