@@ -1,0 +1,20 @@
+stage: real_video_minimal_dataset
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  root: /home/ubuntu22/tgpawb_world_model/data/real_video_minimal
+  raw_dir: /home/ubuntu22/tgpawb_world_model/data/real_video_minimal/raw
+  metadata_file: /home/ubuntu22/tgpawb_world_model/data/real_video_minimal/metadata.jsonl
+  split: real_minimal
+  max_samples: 100
+  past_len: 4
+  future_len: 4
+  total_frames: 8
+  image_size: 224
+  task_text: "predict future visual dynamics"
+
+loader:
+  batch_size: 2
+  num_workers: 0
+  pin_memory: false

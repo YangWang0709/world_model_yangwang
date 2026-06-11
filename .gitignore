@@ -13,6 +13,13 @@ data/processed/
 data/toy_videos/
 data/token_shards/
 data/importance_shards/
+data/real_videos/
+data/real_video_minimal/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
 *.pt
 *.pth
 *.ckpt

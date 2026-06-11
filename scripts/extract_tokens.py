@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from data.real_video_dataset import RealVideoClipDataset
 from data.token_shards import save_token_shard, summarize_token_shard, utc_now_iso
 from data.video_clip_dataset import VideoClipDataset
 from encoders.dummy_video_encoder import DummyVideoEncoder
@@ -79,7 +80,8 @@ def extract_tokens_from_config(
 
     if encoder_cfg.get("name") != "dummy_video_encoder":
         raise NotImplementedError(
-            "Step 3 supports only dummy_video_encoder and does not download V-JEPA, VideoMAE, or VLM weights."
+            "This lightweight extraction path supports only dummy_video_encoder. "
+            "Step 9A does not download or attach V-JEPA, VideoMAE, VLM, or other large model weights."
         )
 
     torch.manual_seed(int(extraction_cfg.get("seed", 42)))
@@ -95,14 +97,33 @@ def extract_tokens_from_config(
         if old_summary.exists():
             old_summary.unlink()
 
-    dataset = VideoClipDataset(
-        root=resolve_path(dataset_cfg["root"]),
-        metadata_file=dataset_cfg.get("metadata_file", "metadata.jsonl"),
-        past_len=int(dataset_cfg.get("past_len", 4)),
-        future_len=int(dataset_cfg.get("future_len", 2)),
-    )
-    if max_samples is not None:
-        dataset.records = dataset.records[:max_samples]
+    dataset_name = str(dataset_cfg.get("name", "toy_videos"))
+    effective_max_samples = max_samples
+    if effective_max_samples is None and extraction_cfg.get("max_samples") is not None:
+        effective_max_samples = int(extraction_cfg["max_samples"])
+
+    if dataset_name == "toy_videos":
+        dataset = VideoClipDataset(
+            root=resolve_path(dataset_cfg["root"]),
+            metadata_file=dataset_cfg.get("metadata_file", "metadata.jsonl"),
+            past_len=int(dataset_cfg.get("past_len", 4)),
+            future_len=int(dataset_cfg.get("future_len", 2)),
+        )
+    elif dataset_name == "real_video_minimal":
+        dataset = RealVideoClipDataset(
+            root=resolve_path(dataset_cfg["root"]),
+            metadata_file=dataset_cfg.get("metadata_file", "metadata.jsonl"),
+            past_len=int(dataset_cfg.get("past_len", 4)),
+            future_len=int(dataset_cfg.get("future_len", 4)),
+            image_size=int(dataset_cfg.get("image_size", 224)),
+            split=dataset_cfg.get("split"),
+            max_samples=effective_max_samples,
+        )
+    else:
+        raise ValueError(f"Unsupported dataset.name {dataset_name!r}")
+
+    if dataset_name == "toy_videos" and effective_max_samples is not None:
+        dataset.records = dataset.records[:effective_max_samples]
 
     batch_size = int(extraction_cfg.get("batch_size", 4))
     shard_size = int(extraction_cfg.get("shard_size", 8))
@@ -212,4 +233,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
