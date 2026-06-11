@@ -1,0 +1,29 @@
+stage: bair_robot_pushing_small_subset
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+input:
+  tfds_name: bair_robot_pushing_small
+  tfds_version: "2.0.0"
+  data_dir: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_tfds
+
+subset:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_subset
+  train_max_episodes: 100
+  test_max_episodes: 16
+  camera: image_main
+  include_aux_camera: false
+  include_action: true
+  include_endeffector_pos: true
+  total_frames: 8
+  past_len: 4
+  future_len: 4
+  image_size: 224
+  split_names:
+    - train
+    - test
+
+loader:
+  batch_size: 2
+  num_workers: 0
+  pin_memory: false

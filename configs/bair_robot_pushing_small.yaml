@@ -1,0 +1,20 @@
+stage: bair_robot_pushing_small_download
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+dataset:
+  tfds_name: bair_robot_pushing_small
+  tfds_version: "2.0.0"
+  data_dir: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_tfds
+  download: true
+  split_train: train
+  split_test: test
+
+resource_limits:
+  min_disk_free_gib: 80
+  expected_download_gib: 30.06
+  expected_dataset_gib: 20.80
+  max_retries: 1
+
+output:
+  report_path: /home/ubuntu22/tgpawb_world_model/docs/BAIR_DOWNLOAD_REPORT.md

@@ -18,6 +18,9 @@ data/token_shards/
 data/importance_shards/
 data/real_videos/
 data/real_video_minimal/
+data/bair_robot_pushing_small/
+data/bair_robot_pushing_small_tfds/
+data/bair_robot_pushing_small_subset/
 *.mp4
 *.avi
 *.mov
