@@ -18,7 +18,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
 from eval.eval_efficiency import token_retention_ratio
 from models.teacher_world_model import TeacherWorldModel
-from training.student_world_model_trainer import build_student_world_model_bundle, selected_key_metrics, student_world_model_forward
+from training.student_world_model_trainer import (
+    build_student_world_model_bundle,
+    selection_quality_metrics,
+    student_world_model_forward,
+)
 from training.teacher_trainer import load_checkpoint, resolve_device, target_from_future_tokens
 from training.train_student_world_model import load_yaml
 
@@ -52,6 +56,7 @@ def evaluate_teacher_student_gap(
     teacher_checkpoint_path: str | Path | None = None,
 ) -> dict[str, Any]:
     train_cfg = config["training"]
+    selection_cfg = config.get("selection", {})
     data_cfg = config["data"]
     output_cfg = config["output"]
     teacher_cfg = config.get("teacher_reference", {})
@@ -79,14 +84,15 @@ def evaluate_teacher_student_gap(
         num_workers=0,
         collate_fn=student_selector_collate_fn,
     )
-    topk = int(train_cfg.get("topk", student_checkpoint.get("metrics_summary", {}).get("topk", 4)))
-    use_sigmoid_scores = bool(train_cfg.get("use_sigmoid_scores", True))
+    topk = int(selection_cfg.get("topk", train_cfg.get("topk", student_checkpoint.get("metrics_summary", {}).get("topk", 4))))
+    use_sigmoid_scores = bool(selection_cfg.get("use_sigmoid_scores", train_cfg.get("use_sigmoid_scores", True)))
 
     teacher_sse = 0.0
     student_sse = 0.0
     element_count = 0
     all_scores = []
     all_masks = []
+    all_importance_targets = []
     with torch.no_grad():
         for batch in loader:
             past_tokens = batch["past_tokens"].to(device)
@@ -113,13 +119,17 @@ def evaluate_teacher_student_gap(
             student_sse += float((student_pred - target).pow(2).sum().item())
             element_count += int(target.numel())
             all_scores.append(scores.detach().cpu())
-            all_masks.append(batch["key_token_mask"].float().cpu())
+            key_token_mask = batch.get("key_token_mask")
+            if key_token_mask is not None:
+                all_masks.append(key_token_mask.float().cpu())
+            all_importance_targets.append(batch["importance_scores_norm"].float().cpu())
 
     teacher_mse = teacher_sse / float(max(element_count, 1))
     student_mse = student_sse / float(max(element_count, 1))
     score_tensor = torch.cat(all_scores, dim=0)
-    mask_tensor = torch.cat(all_masks, dim=0)
-    selection_metrics = selected_key_metrics(score_tensor, mask_tensor, k=topk)
+    mask_tensor = torch.cat(all_masks, dim=0) if all_masks else None
+    importance_tensor = torch.cat(all_importance_targets, dim=0) if all_importance_targets else None
+    selection_metrics = selection_quality_metrics(score_tensor, mask_tensor, importance_tensor, k=topk)
     gap_metrics = compute_teacher_student_gap(teacher_mse, student_mse)
     retention = token_retention_ratio(selected_tokens=topk, total_tokens=int(score_tensor.shape[1]))
     summary = {
@@ -129,6 +139,8 @@ def evaluate_teacher_student_gap(
         "device": str(device),
         "teacher_future_mse": teacher_mse,
         "student_future_mse": student_mse,
+        "teacher_mse": teacher_mse,
+        "student_mse": student_mse,
         "token_retention_ratio": retention,
         "topk": topk,
         "total_tokens": int(score_tensor.shape[1]),

@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
+from eval.eval_efficiency import token_retention_ratio
 from training.student_world_model_trainer import (
     build_student_world_model_bundle,
     evaluate_student_world_model_on_loader,
@@ -35,6 +36,7 @@ def evaluate_student_world_model(
     checkpoint_path: str | Path,
 ) -> dict[str, Any]:
     train_cfg = config["training"]
+    selection_cfg = config.get("selection", {})
     data_cfg = config["data"]
     output_cfg = config["output"]
     device = resolve_device(str(train_cfg.get("device", "cuda_if_available")))
@@ -55,22 +57,33 @@ def evaluate_student_world_model(
         num_workers=0,
         collate_fn=student_selector_collate_fn,
     )
+    topk = int(selection_cfg.get("topk", train_cfg.get("topk", checkpoint.get("metrics_summary", {}).get("topk", 4))))
+    use_sigmoid_scores = bool(
+        selection_cfg.get("use_sigmoid_scores", train_cfg.get("use_sigmoid_scores", True))
+    )
     metrics = evaluate_student_world_model_on_loader(
         selector,
         compressor,
         student_world_model,
         loader,
         device=device,
-        topk=int(train_cfg.get("topk", checkpoint.get("metrics_summary", {}).get("topk", 4))),
-        use_sigmoid_scores=bool(train_cfg.get("use_sigmoid_scores", True)),
+        topk=topk,
+        use_sigmoid_scores=use_sigmoid_scores,
     )
     summary = {
         "checkpoint_path": str(checkpoint_path),
         "selector_checkpoint_path": checkpoint["selector_checkpoint_path"],
         "selector_frozen": bool(checkpoint.get("selector_frozen", True)),
         "dataset_size": len(dataset),
+        "num_samples": len(dataset),
         "device": str(device),
-        "topk": int(train_cfg.get("topk", checkpoint.get("metrics_summary", {}).get("topk", 4))),
+        "topk": topk,
+        "num_tokens": int(dataset[0]["past_tokens"].shape[0]),
+        "token_dim": int(dataset[0]["past_tokens"].shape[1]),
+        "token_retention_ratio": token_retention_ratio(
+            selected_tokens=topk,
+            total_tokens=int(dataset[0]["past_tokens"].shape[0]),
+        ),
         "compressed_tokens": int(checkpoint["compressor_config"]["num_latents"]),
         **metrics,
     }
