@@ -1,0 +1,188 @@
+stage: context_selector_oracle_gap_bair_1000_128
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  context_token_shard_dir_train: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/train
+  context_token_shard_dir_test: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/test
+  context_importance_shard_dir_train: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/train
+  context_importance_shard_dir_test: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/test
+  token_shard_glob: context_tokens_shard_*.pt
+  importance_shard_glob: importance_shard_*.pt
+  max_train_samples: 1000
+  max_test_samples: 128
+  expected_context_tokens: 784
+  expected_current_tokens: 392
+  expected_future_tokens: 392
+
+teacher_reference:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/context_teacher_bair_1000_128_v1/checkpoints/context_teacher_step_001200.pt
+
+step17_reference:
+  context_bottleneck_summary: /home/ubuntu22/tgpawb_world_model/runs/context_bottleneck_bair_1000_128_v1/context_bottleneck_summary.json
+  baseline_aggregate: /home/ubuntu22/tgpawb_world_model/runs/context_bottleneck_baseline_bair_1000_128_v1/baseline_aggregate.json
+  current_only_mse: 1.39464128
+  random_context_topk_mse: 1.36507559
+  learned_context_selector_topk_mse: 1.37120354
+  teacher_context_importance_topk_mse: 1.21603048
+  uniform_context_topk_mse: 1.46179116
+
+selection:
+  retention_ratio: 0.04081632653061224
+  context_topk: 32
+  current_tokens_dropped: false
+  train_current_importance: false
+
+label_diagnostic:
+  enabled: true
+  temporal_blocks: 8
+  topk_values: [8, 16, 32, 64]
+  random_trials: 20
+  compute_oracle_random_gap: true
+  compute_temporal_block_stats: true
+
+selector_model:
+  token_dim: 768
+  hidden_dim: 256
+  dropout: 0.0
+  role_embedding: true
+  temporal_position_embedding: true
+  condition_on_current: true
+  current_pool: mean
+  mode: context
+  max_context_tokens: 2048
+  init_from_step15_state_selector: true
+  state_selector_checkpoint: /home/ubuntu22/tgpawb_world_model/runs/student_selector_bair_videomae_1000_128_weighted_mse_multiseed_v1/weighted_mse_alpha2_seed0/checkpoints/student_selector_step_001000.pt
+  allow_random_init_if_incompatible: true
+
+selector_training:
+  batch_size: 4
+  max_steps: 800
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  max_grad_norm: 1.0
+  checkpoint_every: 800
+  device: cuda_if_available
+
+selector_variants:
+  - name: weighted_mse_alpha2
+    loss_type: weighted_mse
+    alpha: 2.0
+    topk: 32
+    condition_on_current: true
+    temporal_position_embedding: true
+    seed: 0
+
+  - name: weighted_mse_alpha5
+    loss_type: weighted_mse
+    alpha: 5.0
+    topk: 32
+    condition_on_current: true
+    temporal_position_embedding: true
+    seed: 0
+
+  - name: topk_bce
+    loss_type: topk_bce
+    topk: 32
+    bce_loss_weight: 1.0
+    condition_on_current: true
+    temporal_position_embedding: true
+    seed: 0
+
+  - name: pairwise_rank_w0p1
+    loss_type: pairwise_rank
+    topk: 32
+    rank_loss_weight: 0.1
+    num_pairs: 128
+    temperature: 1.0
+    condition_on_current: true
+    temporal_position_embedding: true
+    seed: 0
+
+  - name: hybrid_weighted_mse_rank_bce
+    loss_type: hybrid_weighted_mse_rank_bce
+    topk: 32
+    weighted_mse_alpha: 2.0
+    weighted_mse_loss_weight: 1.0
+    rank_loss_weight: 0.1
+    bce_loss_weight: 0.2
+    num_pairs: 128
+    temperature: 1.0
+    condition_on_current: true
+    temporal_position_embedding: true
+    seed: 0
+
+  - name: weighted_mse_alpha2_no_current_condition
+    loss_type: weighted_mse
+    alpha: 2.0
+    topk: 32
+    condition_on_current: false
+    temporal_position_embedding: true
+    seed: 0
+
+  - name: weighted_mse_alpha2_no_temporal_pos
+    loss_type: weighted_mse
+    alpha: 2.0
+    topk: 32
+    condition_on_current: true
+    temporal_position_embedding: false
+    seed: 0
+
+  - name: temporal_block_balanced_topk
+    loss_type: temporal_block_balanced_topk
+    topk: 32
+    temporal_blocks: 8
+    topk_per_block: 4
+    weighted_mse_alpha: 2.0
+    weighted_mse_loss_weight: 1.0
+    rank_loss_weight: 0.1
+    bce_loss_weight: 0.2
+    temporal_balance_loss_weight: 0.01
+    num_pairs: 128
+    temperature: 1.0
+    condition_on_current: true
+    temporal_position_embedding: true
+    seed: 0
+
+downstream_model:
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  context_memory_mode: mean_pool_selected_context
+
+downstream_eval:
+  enabled: true
+  max_steps: 800
+  batch_size: 4
+  num_workers: 0
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+  top_n_variants: 4
+  context_memory_mode: mean_pool_selected_context
+  current_encoder: mean_pool_full_current
+  current_tokens_dropped: false
+  train_current_importance: false
+  compare_against_step17: true
+
+phase_b:
+  enabled: true
+  select_top_n_from_phase_a: 2
+  seeds: [0, 1, 2]
+  selector_max_steps: 800
+  downstream_max_steps: 800
+
+resource_limits:
+  min_free_disk_gb: 100
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: context_selector_oracle_gap_bair_1000_128_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/context_selector_oracle_gap_bair_1000_128_v1/context_selector_oracle_gap_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/context_selector_oracle_gap_bair_1000_128_v1/context_selector_oracle_gap_summary.md
