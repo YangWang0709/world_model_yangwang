@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data.token_shard_dataset import TokenShardDataset, token_shard_collate_fn
+from data.token_shards import load_token_shard
 from models.teacher_world_model import TeacherWorldModel
 from training.losses import future_latent_mse
 
@@ -109,6 +110,10 @@ class TeacherTrainer:
             shard_glob=data_cfg.get("shard_glob", "tokens_shard_*.pt"),
             map_location="cpu",
         )
+        self.dataset_summary = summarize_token_dataset(
+            self.dataset,
+            split=str(data_cfg.get("split", "")) or None,
+        )
         self.loader = DataLoader(
             self.dataset,
             batch_size=int(train_cfg.get("batch_size", 4)),
@@ -186,11 +191,13 @@ class TeacherTrainer:
             "final_loss": losses[-1],
             "best_loss": min(losses),
             "loss_decreased": bool(losses[-1] < losses[0]),
+            "loss_decreased_or_warn": bool(losses[-1] < losses[0]),
             "checkpoint_path": "",
             "metrics_path": str(self.metrics_path),
             "summary_path": str(self.summary_path),
             "device": str(self.device),
             "dataset_size": len(self.dataset),
+            **self.dataset_summary,
             "run_dir": str(self.run_dir),
         }
 
@@ -215,3 +222,32 @@ class TeacherTrainer:
 
 def run_teacher_training(config: dict[str, Any]) -> dict[str, Any]:
     return TeacherTrainer(config).train()
+
+
+def summarize_token_dataset(dataset: TokenShardDataset, split: str | None = None) -> dict[str, Any]:
+    """Return compact source-token metadata for trainer/eval reports."""
+
+    first_sample = dataset[0]
+    past_tokens = first_sample["past_tokens"]
+    future_tokens = first_sample["future_tokens"]
+    if past_tokens.ndim != 2:
+        raise ValueError(f"Expected sample past_tokens [N, D], got {tuple(past_tokens.shape)}")
+    if future_tokens.ndim not in (1, 2):
+        raise ValueError(f"Expected sample future_tokens [D] or [N, D], got {tuple(future_tokens.shape)}")
+
+    first_shard = load_token_shard(dataset.shard_paths[0], map_location="cpu")
+    encoder_config = dict(first_shard.get("encoder_config", {}))
+    source_encoder = str(first_shard.get("encoder_name", encoder_config.get("actual_encoder", "unknown")))
+    source_split = str(split or first_shard.get("split", ""))
+    return {
+        "num_samples": len(dataset),
+        "num_shards": len(dataset.shard_paths),
+        "num_tokens": int(past_tokens.shape[0]),
+        "token_dim": int(past_tokens.shape[1]),
+        "past_token_shape": list(past_tokens.shape),
+        "future_token_shape": list(future_tokens.shape),
+        "source_encoder": source_encoder,
+        "source_split": source_split,
+        "token_shard_dir": str(Path(dataset.shard_paths[0]).parent),
+        "first_shard_path": str(dataset.shard_paths[0]),
+    }

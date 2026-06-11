@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.token_shard_dataset import TokenShardDataset, token_shard_collate_fn
 from models.teacher_world_model import TeacherWorldModel
 from training.losses import future_latent_mse
-from training.teacher_trainer import load_checkpoint, target_from_future_tokens
+from training.teacher_trainer import load_checkpoint, summarize_token_dataset, target_from_future_tokens
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,6 +56,7 @@ def evaluate_teacher(config: dict[str, Any], checkpoint_path: str | Path) -> dic
         shard_glob=data_cfg.get("shard_glob", "tokens_shard_*.pt"),
         map_location="cpu",
     )
+    dataset_summary = summarize_token_dataset(dataset, split=str(data_cfg.get("split", "")) or None)
     loader = DataLoader(
         dataset,
         batch_size=int(train_cfg.get("batch_size", 4)),
@@ -78,6 +79,12 @@ def evaluate_teacher(config: dict[str, Any], checkpoint_path: str | Path) -> dic
     summary = {
         "checkpoint_path": str(checkpoint_path),
         "dataset_size": len(dataset),
+        "num_samples": len(dataset),
+        "num_tokens": dataset_summary["num_tokens"],
+        "token_dim": dataset_summary["token_dim"],
+        "source_encoder": dataset_summary["source_encoder"],
+        "source_split": dataset_summary["source_split"],
+        "token_shard_dir": dataset_summary["token_shard_dir"],
         "num_batches": len(losses),
         "eval_mse": eval_mse,
         "run_dir": str(run_dir),
@@ -97,4 +104,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
