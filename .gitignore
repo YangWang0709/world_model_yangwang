@@ -8,6 +8,8 @@ venv/
 runs/
 outputs/
 checkpoints/
+model_cache/
+weights/
 data/raw/
 data/processed/
 data/toy_videos/
@@ -24,6 +26,8 @@ data/real_video_minimal/
 *.pth
 *.ckpt
 *.safetensors
+*.bin
+*.onnx
 *.log
 .DS_Store
 .pytest_cache/

@@ -1,0 +1,27 @@
+stage: frozen_video_encoder_smoke
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+resource_limits:
+  max_samples: 4
+  batch_size: 1
+  num_workers: 0
+  clip_len: 8
+  image_size: 224
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+
+encoder:
+  name: videomae
+  model_name_or_path: null
+  allow_download: false
+  local_files_only: true
+  device: cuda_if_available
+  image_size: 224
+  num_frames: 8
+  output_mode: last_hidden_state
+
+fallback:
+  allow_dummy_fallback: true
+  dummy_num_tokens: 196
+  dummy_token_dim: 768

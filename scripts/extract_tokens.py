@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.real_video_dataset import RealVideoClipDataset
 from data.token_shards import save_token_shard, summarize_token_shard, utc_now_iso
 from data.video_clip_dataset import VideoClipDataset
-from encoders.dummy_video_encoder import DummyVideoEncoder
+from encoders.frozen_video_encoder import build_frozen_video_encoder
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,12 +76,7 @@ def extract_tokens_from_config(
     dataset_cfg = config["dataset"]
     encoder_cfg = config["encoder"]
     extraction_cfg = config["extraction"]
-
-    if encoder_cfg.get("name") != "dummy_video_encoder":
-        raise NotImplementedError(
-            "This lightweight extraction path supports only dummy_video_encoder. "
-            "Step 9A does not download or attach V-JEPA, VideoMAE, VLM, or other large model weights."
-        )
+    fallback_cfg = config.get("fallback", {})
 
     torch.manual_seed(int(extraction_cfg.get("seed", 42)))
     device = resolve_device(device_name or extraction_cfg.get("device"))
@@ -134,11 +128,37 @@ def extract_tokens_from_config(
         num_workers=int(extraction_cfg.get("num_workers", 0)),
         collate_fn=collate_samples,
     )
-    encoder = DummyVideoEncoder(
-        num_tokens=int(encoder_cfg.get("num_tokens", 196)),
-        token_dim=int(encoder_cfg.get("token_dim", 768)),
-    ).to(device)
-    encoder.eval()
+    requested_encoder = str(encoder_cfg.get("name", "dummy_video_encoder"))
+    encoder_build_cfg = dict(encoder_cfg)
+    encoder_build_cfg.setdefault("device", str(device))
+    frozen_encoder = build_frozen_video_encoder(encoder_build_cfg)
+    used_fallback = False
+    fallback_reason = None
+    encoder_availability = frozen_encoder.availability
+    if frozen_encoder.is_available():
+        encoder = frozen_encoder
+        actual_encoder = frozen_encoder.encoder_name
+    elif bool(fallback_cfg.get("allow_dummy_fallback", False)):
+        fallback_reason = str(encoder_availability.get("reason", "requested frozen encoder unavailable"))
+        print(
+            "FROZEN_ENCODER_FALLBACK "
+            f"requested={requested_encoder} actual=dummy_video_encoder reason={fallback_reason}"
+        )
+        encoder = build_frozen_video_encoder(
+            {
+                "name": "dummy_video_encoder",
+                "num_tokens": int(fallback_cfg.get("dummy_num_tokens", encoder_cfg.get("num_tokens", 196))),
+                "token_dim": int(fallback_cfg.get("dummy_token_dim", encoder_cfg.get("token_dim", 768))),
+                "device": str(device),
+            }
+        )
+        actual_encoder = "dummy_video_encoder"
+        used_fallback = True
+    else:
+        raise RuntimeError(
+            f"Requested encoder {requested_encoder!r} is unavailable and fallback is disabled: "
+            f"{encoder_availability.get('reason', 'unknown reason')}"
+        )
 
     shard_buffer: list[dict[str, Any]] = []
     shard_summaries: list[dict[str, Any]] = []
@@ -156,12 +176,17 @@ def extract_tokens_from_config(
         metadata = [metadata for item in shard_buffer for metadata in item["metadata"]]
         shard = {
             "schema_version": "0.1.0",
-            "encoder_name": "dummy_video_encoder",
+            "encoder_name": actual_encoder,
             "encoder_config": {
-                "num_tokens": int(encoder_cfg.get("num_tokens", 196)),
-                "token_dim": int(encoder_cfg.get("token_dim", 768)),
+                "requested_encoder": requested_encoder,
+                "actual_encoder": actual_encoder,
+                "used_fallback": used_fallback,
+                "fallback_reason": fallback_reason,
+                "num_tokens": int(fallback_cfg.get("dummy_num_tokens", encoder_cfg.get("num_tokens", 196))),
+                "token_dim": int(fallback_cfg.get("dummy_token_dim", encoder_cfg.get("token_dim", 768))),
                 "patch_grid_h": int(encoder_cfg.get("patch_grid_h", 14)),
                 "patch_grid_w": int(encoder_cfg.get("patch_grid_w", 14)),
+                "encoder_availability": encoder_availability,
             },
             "created_at": utc_now_iso(),
             "split": str(dataset_cfg.get("split", "toy")),
@@ -182,10 +207,10 @@ def extract_tokens_from_config(
 
     with torch.no_grad():
         for batch in loader:
-            past_video = batch["past_video"].to(device)
-            future_video = batch["future_video"].to(device)
-            past_tokens = encoder(past_video)
-            future_tokens = encoder(future_video)
+            past_video = batch["past_video"]
+            future_video = batch["future_video"]
+            past_tokens = encoder.encode(past_video)
+            future_tokens = encoder.encode(future_video)
             shard_buffer.append(
                 {
                     "past_tokens": past_tokens.cpu(),
@@ -208,7 +233,12 @@ def extract_tokens_from_config(
         "batch_size": batch_size,
         "shard_size": shard_size,
         "device": str(device),
-        "encoder_name": encoder_cfg["name"],
+        "encoder_name": actual_encoder,
+        "requested_encoder": requested_encoder,
+        "actual_encoder": actual_encoder,
+        "used_fallback": used_fallback,
+        "fallback_reason": fallback_reason,
+        "encoder_availability": encoder_availability,
         "num_shards": len(shard_summaries),
         "output_dir": str(out_dir),
         "shards": shard_summaries,
