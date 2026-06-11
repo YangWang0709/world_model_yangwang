@@ -105,15 +105,35 @@ class TeacherTrainer:
         self.save_checkpoints = bool(output_cfg.get("save_checkpoint", True))
         self.save_metrics = bool(output_cfg.get("save_metrics", True))
 
+        train_token_shard_dir = data_cfg.get("train_token_shard_dir", data_cfg.get("token_shard_dir"))
+        if train_token_shard_dir is None:
+            raise KeyError("data.token_shard_dir or data.train_token_shard_dir is required")
+        max_train_samples = data_cfg.get("max_train_samples", data_cfg.get("max_samples"))
         self.dataset = TokenShardDataset(
-            data_cfg["token_shard_dir"],
+            train_token_shard_dir,
             shard_glob=data_cfg.get("shard_glob", "tokens_shard_*.pt"),
             map_location="cpu",
+            max_samples=int(max_train_samples) if max_train_samples is not None else None,
         )
+        self.train_token_shard_dir = str(train_token_shard_dir)
+        self.test_token_shard_dir = data_cfg.get("test_token_shard_dir")
         self.dataset_summary = summarize_token_dataset(
             self.dataset,
-            split=str(data_cfg.get("split", "")) or None,
+            split=str(data_cfg.get("split_train", data_cfg.get("split", ""))) or None,
         )
+        self.test_dataset_summary: dict[str, Any] | None = None
+        if self.test_token_shard_dir is not None:
+            max_test_samples = data_cfg.get("max_test_samples")
+            test_dataset = TokenShardDataset(
+                self.test_token_shard_dir,
+                shard_glob=data_cfg.get("shard_glob", "tokens_shard_*.pt"),
+                map_location="cpu",
+                max_samples=int(max_test_samples) if max_test_samples is not None else None,
+            )
+            self.test_dataset_summary = summarize_token_dataset(
+                test_dataset,
+                split=str(data_cfg.get("split_test", "")) or None,
+            )
         self.loader = DataLoader(
             self.dataset,
             batch_size=int(train_cfg.get("batch_size", 4)),
@@ -197,6 +217,14 @@ class TeacherTrainer:
             "summary_path": str(self.summary_path),
             "device": str(self.device),
             "dataset_size": len(self.dataset),
+            "dataset": self.dataset_summary.get("dataset", "unknown"),
+            "train_token_shard_dir": self.train_token_shard_dir,
+            "test_token_shard_dir": str(self.test_token_shard_dir) if self.test_token_shard_dir else None,
+            "train_num_samples": len(self.dataset),
+            "test_num_samples": (
+                int(self.test_dataset_summary["num_samples"]) if self.test_dataset_summary else None
+            ),
+            "test_dataset_summary": self.test_dataset_summary,
             **self.dataset_summary,
             "run_dir": str(self.run_dir),
         }
@@ -239,6 +267,10 @@ def summarize_token_dataset(dataset: TokenShardDataset, split: str | None = None
     encoder_config = dict(first_shard.get("encoder_config", {}))
     source_encoder = str(first_shard.get("encoder_name", encoder_config.get("actual_encoder", "unknown")))
     source_split = str(split or first_shard.get("split", ""))
+    first_metadata = first_sample.get("metadata", {})
+    if not isinstance(first_metadata, dict):
+        first_metadata = {}
+    source_dataset = str(first_metadata.get("source", first_metadata.get("dataset", "unknown")))
     return {
         "num_samples": len(dataset),
         "num_shards": len(dataset.shard_paths),
@@ -248,6 +280,7 @@ def summarize_token_dataset(dataset: TokenShardDataset, split: str | None = None
         "future_token_shape": list(future_tokens.shape),
         "source_encoder": source_encoder,
         "source_split": source_split,
+        "dataset": source_dataset,
         "token_shard_dir": str(Path(dataset.shard_paths[0]).parent),
         "first_shard_path": str(dataset.shard_paths[0]),
     }

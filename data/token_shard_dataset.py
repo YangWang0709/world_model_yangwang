@@ -42,18 +42,25 @@ class TokenShardDataset(Dataset):
         shard_paths: str | Path | Iterable[str | Path] = DEFAULT_TOKEN_SHARD_DIR,
         shard_glob: str = "tokens_shard_*.pt",
         map_location: str = "cpu",
+        max_samples: int | None = None,
     ) -> None:
+        if max_samples is not None and max_samples <= 0:
+            raise ValueError("max_samples must be positive when provided")
         self.shard_paths = _resolve_shard_paths(shard_paths, shard_glob)
         self.samples: list[dict[str, Any]] = []
         self.shard_summaries: list[dict[str, Any]] = []
 
         for shard_path in self.shard_paths:
+            if max_samples is not None and len(self.samples) >= max_samples:
+                break
             shard = load_token_shard(shard_path, map_location=map_location)
             validate_token_shard(shard, strict=True)
             self.shard_summaries.append(summarize_token_shard(shard))
 
             batch_size = shard["past_tokens"].shape[0]
             for index in range(batch_size):
+                if max_samples is not None and len(self.samples) >= max_samples:
+                    break
                 past_tokens = shard["past_tokens"][index]
                 future_tokens = shard["future_tokens"][index]
                 if past_tokens.ndim != 2:

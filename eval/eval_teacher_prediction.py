@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.token_shard_dataset import TokenShardDataset, token_shard_collate_fn
 from models.teacher_world_model import TeacherWorldModel
 from training.losses import future_latent_mse
-from training.teacher_trainer import load_checkpoint, summarize_token_dataset, target_from_future_tokens
+from training.teacher_trainer import load_checkpoint, resolve_device, summarize_token_dataset, target_from_future_tokens
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,21 +42,36 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def evaluate_teacher(config: dict[str, Any], checkpoint_path: str | Path) -> dict[str, Any]:
+    train_cfg = config["training"]
+    device = resolve_device(str(train_cfg.get("device", "cuda_if_available")))
     checkpoint = load_checkpoint(checkpoint_path, map_location="cpu")
     model_config = checkpoint["model_config"]
-    model = TeacherWorldModel(**model_config)
+    model = TeacherWorldModel(**model_config).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
     data_cfg = config["data"]
-    train_cfg = config["training"]
     output_cfg = config["output"]
+    token_shard_dir = (
+        data_cfg.get("eval_token_shard_dir")
+        or data_cfg.get("test_token_shard_dir")
+        or data_cfg.get("token_shard_dir")
+    )
+    if token_shard_dir is None:
+        raise KeyError("data.token_shard_dir, data.test_token_shard_dir, or data.eval_token_shard_dir is required")
+    max_samples_value = (
+        data_cfg.get("max_eval_samples")
+        or data_cfg.get("max_test_samples")
+        or data_cfg.get("max_samples")
+    )
     dataset = TokenShardDataset(
-        data_cfg["token_shard_dir"],
+        token_shard_dir,
         shard_glob=data_cfg.get("shard_glob", "tokens_shard_*.pt"),
         map_location="cpu",
+        max_samples=int(max_samples_value) if max_samples_value is not None else None,
     )
-    dataset_summary = summarize_token_dataset(dataset, split=str(data_cfg.get("split", "")) or None)
+    split = str(data_cfg.get("split_eval", data_cfg.get("split_test", data_cfg.get("split", "")))) or None
+    dataset_summary = summarize_token_dataset(dataset, split=split)
     loader = DataLoader(
         dataset,
         batch_size=int(train_cfg.get("batch_size", 4)),
@@ -66,18 +81,29 @@ def evaluate_teacher(config: dict[str, Any], checkpoint_path: str | Path) -> dic
     )
 
     losses: list[float] = []
+    preds: list[torch.Tensor] = []
+    targets: list[torch.Tensor] = []
     with torch.no_grad():
         for batch in loader:
-            pred = model(batch["past_tokens"])
-            target = target_from_future_tokens(batch["future_tokens"])
+            past_tokens = batch["past_tokens"].to(device)
+            future_tokens = batch["future_tokens"].to(device)
+            pred = model(past_tokens)
+            target = target_from_future_tokens(future_tokens)
             if pred.shape != target.shape:
                 raise ValueError(f"Prediction shape {tuple(pred.shape)} != target shape {tuple(target.shape)}")
             losses.append(float(future_latent_mse(pred, target).item()))
+            preds.append(pred.detach().cpu())
+            targets.append(target.detach().cpu())
 
     eval_mse = float(sum(losses) / max(1, len(losses)))
+    pred_tensor = torch.cat(preds, dim=0)
+    target_tensor = torch.cat(targets, dim=0)
     run_dir = Path(output_cfg["run_root"]) / output_cfg["run_name"]
     summary = {
         "checkpoint_path": str(checkpoint_path),
+        "checkpoint_step": int(checkpoint["step"]),
+        "dataset": dataset_summary.get("dataset", "unknown"),
+        "split": split or dataset_summary["source_split"],
         "dataset_size": len(dataset),
         "num_samples": len(dataset),
         "num_tokens": dataset_summary["num_tokens"],
@@ -87,6 +113,15 @@ def evaluate_teacher(config: dict[str, Any], checkpoint_path: str | Path) -> dic
         "token_shard_dir": dataset_summary["token_shard_dir"],
         "num_batches": len(losses),
         "eval_mse": eval_mse,
+        "pred_mean": float(pred_tensor.mean().item()),
+        "pred_std": float(pred_tensor.std(unbiased=False).item()),
+        "pred_min": float(pred_tensor.min().item()),
+        "pred_max": float(pred_tensor.max().item()),
+        "target_mean": float(target_tensor.mean().item()),
+        "target_std": float(target_tensor.std(unbiased=False).item()),
+        "target_min": float(target_tensor.min().item()),
+        "target_max": float(target_tensor.max().item()),
+        "device": str(device),
         "run_dir": str(run_dir),
     }
     output_path = run_dir / "eval_summary.json"
