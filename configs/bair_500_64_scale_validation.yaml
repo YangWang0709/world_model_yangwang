@@ -1,0 +1,130 @@
+stage: bair_500_64_scale_validation
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+overwrite_incomplete_step14_outputs: true
+
+environments:
+  conda_executable: /home/ubuntu22/miniconda3/bin/conda
+  tfds_export_env: tgpawb_tfds_py311
+  train_env: env_isaaclab
+
+configs:
+  export_subset: configs/export_bair_subset_500_64.yaml
+  token_extraction: configs/token_extraction_bair_videomae_500_64.yaml
+  train_teacher: configs/train_teacher_bair_videomae_500_64.yaml
+  generate_importance: configs/generate_importance_bair_videomae_500_64.yaml
+  train_selector: configs/train_selector_bair_videomae_500_64_weighted_mse.yaml
+  train_student_world_model: configs/train_student_world_model_bair_videomae_500_64_weighted_mse.yaml
+  baseline_comparison: configs/baseline_comparison_bair_videomae_500_64.yaml
+
+dataset:
+  name: bair_robot_pushing_small
+  tfds_data_dir: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_tfds
+  subset_dir: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_subset_500_64
+  train_samples: 500
+  test_samples: 64
+  past_len: 4
+  future_len: 4
+  image_size: 224
+  include_action: true
+  include_endeffector_pos: true
+
+encoder:
+  name: videomae
+  model_name_or_path: /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  allow_download: false
+  local_files_only: true
+  fallback: none
+
+tokens:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_500_64
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_500_64/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_500_64/test
+  shard_size: 4
+  batch_size: 1
+  num_workers: 0
+
+teacher:
+  run_name: teacher_bair_videomae_500_64_v1
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/teacher_bair_videomae_500_64_v1/checkpoints/teacher_world_model_step_000800.pt
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  pool: mean
+  batch_size: 4
+  max_steps: 800
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+
+importance:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64/test
+  batch_size: 1
+  token_chunk_size: 32
+  normalize: minmax_per_sample
+  mask_mode: zero
+
+selector:
+  run_name: student_selector_bair_videomae_500_64_weighted_mse_v1
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/student_selector_bair_videomae_500_64_weighted_mse_v1/checkpoints/student_selector_step_000800.pt
+  loss_type: weighted_mse_alpha2
+  alpha: 2.0
+  token_dim: 768
+  hidden_dim: 256
+  dropout: 0.0
+  use_task: false
+  batch_size: 4
+  max_steps: 800
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  topk: 16
+
+student_world_model:
+  run_name: student_world_model_bair_videomae_500_64_weighted_mse_v1
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/student_world_model_bair_videomae_500_64_weighted_mse_v1/checkpoints/student_world_model_step_001000.pt
+  topk: 16
+  batch_size: 4
+  max_steps: 1000
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+
+compressor:
+  token_dim: 768
+  latent_dim: 512
+  hidden_dim: 512
+  num_latents: 16
+  dropout: 0.0
+  compressor_type: perceiver_like
+  num_heads: 8
+
+baseline:
+  enabled: true
+  run_name: baseline_comparison_bair_videomae_500_64_v1
+  policies:
+    - random_k
+    - uniform_k
+    - teacher_importance_topk
+    - learned_selector
+  random_k_seeds: [0, 1, 2]
+  other_seeds: [0]
+  max_steps: 1000
+  batch_size: 4
+  topk: 16
+
+resource_limits:
+  min_free_disk_gb: 80
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bair_500_64_scale_validation_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/bair_500_64_scale_validation_v1/scale_validation_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/bair_500_64_scale_validation_v1/scale_validation_summary.md

@@ -1,0 +1,44 @@
+stage: predictive_importance_bair_videomae_500_64
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  train_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_500_64/train
+  test_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_500_64/test
+  shard_glob: tokens_shard_*.pt
+  split_train: train
+  split_test: test
+  max_train_samples: 500
+  max_test_samples: 64
+
+teacher:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/teacher_bair_videomae_500_64_v1/checkpoints/teacher_world_model_step_000800.pt
+  config:
+    token_dim: 768
+    hidden_dim: 512
+    output_dim: 768
+    num_layers: 2
+    dropout: 0.0
+    pool: mean
+
+importance:
+  method: teacher_token_occlusion
+  mask_mode: zero
+  mask_value: 0.0
+  batch_size: 1
+  token_chunk_size: 32
+  device: cuda_if_available
+  clamp_negative_importance: false
+  normalize: minmax_per_sample
+
+resource_limits:
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64/test
+  summary_path: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_500_64/importance_summary.json
+  overwrite: true

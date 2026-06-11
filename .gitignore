@@ -21,6 +21,7 @@ data/real_video_minimal/
 data/bair_robot_pushing_small/
 data/bair_robot_pushing_small_tfds/
 data/bair_robot_pushing_small_subset/
+data/bair_robot_pushing_small_subset_500_64/
 *.mp4
 *.avi
 *.mov
