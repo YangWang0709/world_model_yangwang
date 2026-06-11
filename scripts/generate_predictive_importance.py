@@ -6,6 +6,7 @@ import argparse
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device")
     parser.add_argument("--max-shards", type=int)
     parser.add_argument("--max-samples", type=int)
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--token-chunk-size", type=int)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -77,6 +80,10 @@ def _with_cli_overrides(config: dict[str, Any], args: argparse.Namespace) -> dic
         updated["data"]["max_shards"] = int(args.max_shards)
     if args.max_samples is not None:
         updated["data"]["max_samples"] = int(args.max_samples)
+    if args.batch_size is not None:
+        updated["importance"]["batch_size"] = int(args.batch_size)
+    if args.token_chunk_size is not None:
+        updated["importance"]["token_chunk_size"] = int(args.token_chunk_size)
     if args.overwrite:
         updated["output"]["overwrite"] = True
     return updated
@@ -145,6 +152,10 @@ def normalize_importance_scores(scores: torch.Tensor, mode: str = "minmax_per_sa
     return normalized
 
 
+def _is_oom_error(exc: BaseException) -> bool:
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or "out of memory" in str(exc).lower()
+
+
 def compute_occlusion_importance(
     model: TeacherWorldModel,
     past_tokens: torch.Tensor,
@@ -206,18 +217,27 @@ def compute_occlusion_importance(
 def _select_max_samples(shard: dict[str, Any], max_samples: int | None) -> dict[str, Any]:
     if max_samples is None:
         return shard
-    limit = min(int(max_samples), int(shard["past_tokens"].shape[0]))
+    return _select_sample_range(shard, start=0, end=min(int(max_samples), int(shard["past_tokens"].shape[0])))
+
+
+def _select_sample_range(shard: dict[str, Any], start: int, end: int) -> dict[str, Any]:
+    """Return a shallow token shard slice with tensors and per-sample lists aligned."""
+
+    if start < 0 or end < start:
+        raise ValueError(f"Invalid sample range: start={start}, end={end}")
     selected = dict(shard)
-    selected["past_tokens"] = shard["past_tokens"][:limit]
-    selected["future_tokens"] = shard["future_tokens"][:limit]
-    selected["sample_ids"] = shard["sample_ids"][:limit]
-    selected["task_texts"] = shard["task_texts"][:limit]
-    selected["metadata"] = shard["metadata"][:limit]
+    selected["past_tokens"] = shard["past_tokens"][start:end]
+    selected["future_tokens"] = shard["future_tokens"][start:end]
+    selected["sample_ids"] = shard["sample_ids"][start:end]
+    selected["task_texts"] = shard["task_texts"][start:end]
+    selected["metadata"] = shard["metadata"][start:end]
     return selected
 
 
 def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
     """Generate importance shards from token shards and a tiny teacher checkpoint."""
+
+    start_time = time.perf_counter()
 
     data_cfg = config["data"]
     teacher_cfg = config["teacher"]
@@ -248,56 +268,105 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
         "normalize": str(importance_cfg.get("normalize", "minmax_per_sample")),
     }
     token_chunk_size = int(importance_cfg.get("token_chunk_size", 32))
+    batch_size = int(importance_cfg.get("batch_size", 0) or 0)
+    if batch_size < 0:
+        raise ValueError("batch_size must be non-negative")
     method = str(importance_cfg.get("method", "teacher_token_occlusion"))
 
     shard_summaries: list[dict[str, Any]] = []
     output_paths: list[Path] = []
+    total_samples = 0
+    observed_num_tokens: int | None = None
+    observed_token_dim: int | None = None
     print(f"teacher checkpoint: {teacher_checkpoint}")
     print(f"source token shard dir: {data_cfg['token_shard_dir']}")
     print(f"output dir: {output_dir}")
     print(f"device: {device}")
     print(f"number of source shards: {len(shard_paths)}")
 
-    for shard_index, shard_path in enumerate(shard_paths):
-        token_shard = _select_max_samples(load_token_shard(shard_path, map_location="cpu"), max_samples)
-        results = compute_occlusion_importance(
-            teacher_model,
-            token_shard["past_tokens"],
-            token_shard["future_tokens"],
-            token_chunk_size=token_chunk_size,
-            mask_mode=mask_config["mask_mode"],
-            mask_value=mask_config["mask_value"],
-            clamp_negative_importance=mask_config["clamp_negative_importance"],
-            normalize=mask_config["normalize"],
-        )
-        importance_shard = {
-            "schema_version": IMPORTANCE_SHARD_SCHEMA_VERSION,
-            "importance_method": method,
-            "teacher_checkpoint": str(teacher_checkpoint),
-            "teacher_config": dict(teacher_model_config),
-            "source_token_shard": str(shard_path),
-            "created_at": utc_now_iso(),
-            "split": split,
-            "sample_ids": list(token_shard["sample_ids"]),
-            "task_texts": list(token_shard["task_texts"]),
-            "importance_scores": results["importance_scores"].cpu(),
-            "importance_scores_norm": results["importance_scores_norm"].cpu(),
-            "base_losses": results["base_losses"].cpu(),
-            "masked_losses": results["masked_losses"].cpu(),
-            "metadata": list(token_shard["metadata"]),
-            "mask_config": mask_config,
-        }
-        output_path = output_dir / f"importance_shard_{shard_index:06d}.pt"
-        save_importance_shard(output_path, importance_shard)
-        summary = summarize_importance_shard(importance_shard)
-        summary["path"] = str(output_path)
-        shard_summaries.append(summary)
-        output_paths.append(output_path)
-        print(f"WROTE_IMPORTANCE_SHARD {output_path} {summary}")
+    try:
+        for source_shard_index, shard_path in enumerate(shard_paths):
+            raw_shard = load_token_shard(shard_path, map_location="cpu")
+            shard_batch = int(raw_shard["past_tokens"].shape[0])
+            remaining = None if max_samples is None else int(max_samples) - total_samples
+            if remaining is not None and remaining <= 0:
+                break
+            take = shard_batch if remaining is None else min(shard_batch, remaining)
+            selected_shard = _select_max_samples(raw_shard, take)
+            effective_batch_size = batch_size or int(selected_shard["past_tokens"].shape[0])
+            if effective_batch_size < 1:
+                raise ValueError("effective batch size must be at least 1")
 
+            for batch_start in range(0, int(selected_shard["past_tokens"].shape[0]), effective_batch_size):
+                batch_end = min(batch_start + effective_batch_size, int(selected_shard["past_tokens"].shape[0]))
+                token_shard = _select_sample_range(selected_shard, batch_start, batch_end)
+                if int(token_shard["past_tokens"].shape[0]) == 0:
+                    continue
+                batch_num_tokens = int(token_shard["past_tokens"].shape[1])
+                batch_token_dim = int(token_shard["past_tokens"].shape[2])
+                observed_num_tokens = observed_num_tokens or batch_num_tokens
+                observed_token_dim = observed_token_dim or batch_token_dim
+
+                results = compute_occlusion_importance(
+                    teacher_model,
+                    token_shard["past_tokens"],
+                    token_shard["future_tokens"],
+                    token_chunk_size=token_chunk_size,
+                    mask_mode=mask_config["mask_mode"],
+                    mask_value=mask_config["mask_value"],
+                    clamp_negative_importance=mask_config["clamp_negative_importance"],
+                    normalize=mask_config["normalize"],
+                )
+                importance_shard = {
+                    "schema_version": IMPORTANCE_SHARD_SCHEMA_VERSION,
+                    "importance_method": method,
+                    "teacher_checkpoint": str(teacher_checkpoint),
+                    "teacher_config": dict(teacher_model_config),
+                    "source_token_shard": str(shard_path),
+                    "created_at": utc_now_iso(),
+                    "split": split,
+                    "sample_ids": list(token_shard["sample_ids"]),
+                    "task_texts": list(token_shard["task_texts"]),
+                    "importance_scores": results["importance_scores"].cpu(),
+                    "importance_scores_norm": results["importance_scores_norm"].cpu(),
+                    "base_losses": results["base_losses"].cpu(),
+                    "masked_losses": results["masked_losses"].cpu(),
+                    "metadata": list(token_shard["metadata"]),
+                    "mask_config": mask_config,
+                    "source_batch_range": {
+                        "source_shard_index": source_shard_index,
+                        "start": batch_start,
+                        "end": batch_end,
+                    },
+                }
+                output_path = output_dir / f"importance_shard_{len(output_paths):06d}.pt"
+                save_importance_shard(output_path, importance_shard)
+                summary = summarize_importance_shard(importance_shard)
+                summary["path"] = str(output_path)
+                summary["source_shard_index"] = source_shard_index
+                summary["source_batch_range"] = [batch_start, batch_end]
+                shard_summaries.append(summary)
+                output_paths.append(output_path)
+                total_samples += int(results["importance_scores"].shape[0])
+                print(f"WROTE_IMPORTANCE_SHARD {output_path} {summary}")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+    except RuntimeError as exc:
+        if _is_oom_error(exc):
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise RuntimeError(
+                "CUDA OOM while generating predictive importance; reduce token_chunk_size "
+                "or move the next run to a larger 4090 / 48GB server."
+            ) from exc
+        raise
+
+    if not output_paths:
+        raise RuntimeError("No importance shards were generated")
     raw_values = torch.cat(
         [torch.as_tensor(summary["importance_mean"]).reshape(1) for summary in shard_summaries]
     )
+    elapsed_time_sec = round(time.perf_counter() - start_time, 3)
     summary = {
         "schema_version": IMPORTANCE_SHARD_SCHEMA_VERSION,
         "importance_method": method,
@@ -307,9 +376,19 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
         "device": str(device),
         "num_source_shards": len(shard_paths),
         "num_importance_shards": len(output_paths),
+        "num_samples": int(total_samples),
+        "num_tokens": int(observed_num_tokens or 0),
+        "token_dim": int(observed_token_dim or int(teacher_model_config.get("token_dim", 0) or 0)),
+        "batch_size": batch_size,
+        "token_chunk_size": token_chunk_size,
+        "max_samples": int(max_samples) if max_samples is not None else None,
+        "mask_config": mask_config,
         "importance_shard_files": [path.name for path in output_paths],
         "shards": shard_summaries,
         "importance_mean_across_shards": float(raw_values.mean().item()) if raw_values.numel() else 0.0,
+        "elapsed_time_sec": elapsed_time_sec,
+        "oom": False,
+        "resource_limits": dict(config.get("resource_limits", {})),
     }
     summary_path = Path(output_cfg.get("summary_path", output_dir / "importance_summary.json"))
     summary_path.parent.mkdir(parents=True, exist_ok=True)

@@ -49,11 +49,15 @@ def main() -> None:
     inspect_summary = inspect_importance_shard(shard_paths[0])
     checks = {
         "shard_count_ok": len(shard_paths) >= 2,
-        "importance_scores_shape_ok": first_summary["importance_scores_shape"] == [8, 196],
-        "importance_scores_norm_shape_ok": first_summary["importance_scores_norm_shape"] == [8, 196],
-        "base_losses_shape_ok": first_summary["base_losses_shape"] == [8],
-        "masked_losses_shape_ok": first_summary["masked_losses_shape"] == [8, 196],
-        "sample_ids_len_ok": len(first_shard["sample_ids"]) == 8,
+        "importance_scores_shape_ok": first_summary["importance_scores_shape"][1] == 196,
+        "importance_scores_norm_shape_ok": (
+            first_summary["importance_scores_norm_shape"] == first_summary["importance_scores_shape"]
+        ),
+        "base_losses_shape_ok": first_summary["base_losses_shape"] == [first_summary["num_samples"]],
+        "masked_losses_shape_ok": (
+            first_summary["masked_losses_shape"] == first_summary["importance_scores_shape"]
+        ),
+        "sample_ids_len_ok": len(first_shard["sample_ids"]) == first_summary["num_samples"],
         "inspect_matches_first": inspect_summary["importance_scores_shape"] == first_summary["importance_scores_shape"],
         "eval_samples_ok": int(eval_summary["num_samples"]) >= 16,
     }

@@ -53,19 +53,31 @@ def evaluate_importance_dir(importance_dir: str | Path, output_path: str | Path 
     masked_losses = torch.cat([shard["masked_losses"].float() for shard in shards], dim=0)
     top1 = importance.topk(k=1, dim=1).values.mean(dim=1)
     top5 = importance.topk(k=min(5, importance.shape[1]), dim=1).values.mean(dim=1)
+    top10 = importance.topk(k=min(10, importance.shape[1]), dim=1).values.mean(dim=1)
+    first_teacher_config = dict(shards[0].get("teacher_config", {}))
+    token_dim = first_teacher_config.get("token_dim")
 
     summary = {
         "importance_dir": str(root),
         "num_shards": len(shard_paths),
         "num_samples": int(importance.shape[0]),
         "num_tokens": int(importance.shape[1]),
+        "token_dim": int(token_dim) if token_dim is not None else None,
         "shard_files": [path.name for path in shard_paths],
         **_stats(importance, "importance"),
         **_stats(normalized, "normalized_importance"),
+        "positive_importance_ratio": float((importance > 0).float().mean().item()),
         "base_loss_mean": float(base_losses.mean().item()),
+        "base_loss_std": float(base_losses.std(unbiased=False).item()) if base_losses.numel() > 1 else 0.0,
+        "base_loss_min": float(base_losses.min().item()),
+        "base_loss_max": float(base_losses.max().item()),
         "masked_loss_mean": float(masked_losses.mean().item()),
+        "masked_loss_std": float(masked_losses.std(unbiased=False).item()) if masked_losses.numel() > 1 else 0.0,
+        "masked_loss_min": float(masked_losses.min().item()),
+        "masked_loss_max": float(masked_losses.max().item()),
         "top1_importance_mean": float(top1.mean().item()),
         "top5_importance_mean": float(top5.mean().item()),
+        "top10_importance_mean": float(top10.mean().item()),
     }
 
     destination = Path(output_path) if output_path else root / "eval_importance_summary.json"
