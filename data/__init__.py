@@ -1,6 +1,7 @@
 """Data utilities for the minimal TGP-AWB world model skeleton."""
 
 __all__ = [
+    "BAIRRobotPushingDataset",
     "DummyVideoDataset",
     "RealVideoClipDataset",
     "TokenShardDataset",
@@ -10,6 +11,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    if name == "BAIRRobotPushingDataset":
+        from .bair_dataset import BAIRRobotPushingDataset
+
+        return BAIRRobotPushingDataset
     if name == "DummyVideoDataset":
         from .datasets import DummyVideoDataset
 

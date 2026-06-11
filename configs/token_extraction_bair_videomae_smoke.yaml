@@ -1,0 +1,50 @@
+stage: token_extraction_bair_videomae_smoke
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+dataset:
+  name: bair_robot_pushing_small_subset
+  root: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_subset
+  train_metadata_file: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_subset/train/metadata.jsonl
+  test_metadata_file: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_subset/test/metadata.jsonl
+  split_names:
+    - train
+    - test
+  past_len: 4
+  future_len: 4
+  image_size: 224
+  max_train_samples: 100
+  max_test_samples: 16
+  include_action: true
+  include_endeffector_pos: true
+
+encoder:
+  name: videomae
+  model_name_or_path: /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  cache_dir: /home/ubuntu22/tgpawb_world_model/model_cache/huggingface
+  allow_download: false
+  local_files_only: true
+  device: cuda_if_available
+  image_size: 224
+  num_frames: 4
+  output_mode: last_hidden_state
+  ignore_mismatched_sizes: true
+  source_policy: windows_local_then_transfer
+
+fallback:
+  allow_dummy_fallback: false
+
+extraction:
+  batch_size: 1
+  num_workers: 0
+  device: cuda_if_available
+  shard_size: 4
+  seed: 42
+  output_root: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_smoke
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_smoke/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_smoke/test
+
+resource_limits:
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
