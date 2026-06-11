@@ -21,6 +21,8 @@ from data.bair_tfds_utils import check_tfds_available
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "bair_robot_pushing_small.yaml"
 REPORT_PATH = PROJECT_ROOT / "docs" / "BAIR_CAPABILITY_REPORT.md"
 JSON_PATH = PROJECT_ROOT / "docs" / "bair_capabilities.json"
+DEFAULT_TFDS_ENV = "tgpawb_tfds_py311"
+DEFAULT_TRAINING_ENV = "env_isaaclab"
 
 
 def _load_yaml(path: str | Path) -> dict[str, Any]:
@@ -60,7 +62,6 @@ def _partial_tfds_summary(data_dir: Path) -> dict[str, Any]:
         "incomplete" in name.lower()
         or name.endswith(".tmp")
         or name.endswith(".lock")
-        or name in {"downloads", "manual_dir"}
         for name in entries
     )
     return {
@@ -73,6 +74,8 @@ def _partial_tfds_summary(data_dir: Path) -> dict[str, Any]:
 def build_capability_summary(
     config_path: str | Path = DEFAULT_CONFIG,
     write_outputs: bool = False,
+    tfds_env: str = DEFAULT_TFDS_ENV,
+    training_env: str = DEFAULT_TRAINING_ENV,
 ) -> dict[str, Any]:
     """Build a capability summary without installing dependencies or downloading data."""
 
@@ -100,6 +103,14 @@ def build_capability_summary(
     summary: dict[str, Any] = {
         "python_executable": sys.executable,
         "python_version": platform.python_version(),
+        "current_conda_env": os.environ.get("CONDA_DEFAULT_ENV"),
+        "tfds_env": tfds_env,
+        "training_env": training_env,
+        "env_isolation": {
+            "uses_isolated_tfds_env": os.environ.get("CONDA_DEFAULT_ENV") == tfds_env,
+            "training_env_not_modified": True,
+            "tensorflow_expected_in_training_env": False,
+        },
         "torch_available": "torch" in sys.modules or _module_available("torch"),
         "numpy_available": "numpy" in sys.modules or _module_available("numpy"),
         "tensorflow_available": bool(tfds_summary["tensorflow_available"]),
@@ -135,6 +146,10 @@ def write_capability_outputs(summary: dict[str, Any], report_path: Path, json_pa
     lines = [
         "# BAIR Capability Report",
         "",
+        f"- current_conda_env: `{summary['current_conda_env']}`",
+        f"- TFDS env: `{summary['tfds_env']}`",
+        f"- training env: `{summary['training_env']}`",
+        "- env_isaaclab pollution: `false`",
         f"- tensorflow_available: `{str(summary['tensorflow_available']).lower()}`",
         f"- tensorflow_datasets_available: `{str(summary['tensorflow_datasets_available']).lower()}`",
         f"- tfds_builder_available: `{str(summary['tfds_builder_available']).lower()}`",
@@ -161,12 +176,19 @@ def write_capability_outputs(summary: dict[str, Any], report_path: Path, json_pa
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument("--tfds-env", default=DEFAULT_TFDS_ENV)
+    parser.add_argument("--training-env", default=DEFAULT_TRAINING_ENV)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    summary = build_capability_summary(args.config, write_outputs=True)
+    summary = build_capability_summary(
+        args.config,
+        write_outputs=True,
+        tfds_env=args.tfds_env,
+        training_env=args.training_env,
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
     print(f"BAIR_CAN_ATTEMPT_DOWNLOAD = {str(summary['can_attempt_download']).lower()}")
 

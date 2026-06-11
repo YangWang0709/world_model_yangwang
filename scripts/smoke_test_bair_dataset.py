@@ -103,7 +103,8 @@ def run_smoke() -> dict[str, Any]:
     data_dir = Path(download_config["dataset"]["data_dir"])
     output_root = Path(subset_config["subset"]["output_root"])
     disk_before = _disk_free_gib(project_root)
-    capability = build_capability_summary(DOWNLOAD_CONFIG, write_outputs=True)
+    subset_ready_at_start = _subset_ready(output_root)
+    capability = build_capability_summary(DOWNLOAD_CONFIG, write_outputs=not subset_ready_at_start)
     summary: dict[str, Any] = {
         "smoke_pass": False,
         "blocking_reason": None,
@@ -126,7 +127,10 @@ def run_smoke() -> dict[str, Any]:
         "elapsed_time_sec": 0.0,
     }
 
-    if not data_dir.exists() or not any(data_dir.iterdir()):
+    if subset_ready_at_start:
+        summary["download_status"] = "skipped_subset_ready"
+        summary["subset_export_status"] = "reused_existing"
+    elif not data_dir.exists() or not any(data_dir.iterdir()):
         download_summary = run_download(DOWNLOAD_CONFIG)
         summary["download_summary"] = download_summary
         summary["download_status"] = "success" if download_summary.get("download_success") else "blocked"
@@ -135,7 +139,7 @@ def run_smoke() -> dict[str, Any]:
     else:
         summary["download_status"] = "reused_existing"
 
-    if not _subset_ready(output_root):
+    if not _subset_ready(output_root) and summary["download_status"] != "blocked":
         export_summary = export_bair_subset(SUBSET_CONFIG)
         summary["subset_export_summary"] = export_summary
         summary["subset_export_status"] = "success" if export_summary.get("export_success") else "blocked"

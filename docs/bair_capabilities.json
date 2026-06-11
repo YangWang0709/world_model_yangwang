@@ -1,23 +1,34 @@
 {
-  "bair_data_dir_exists": false,
-  "blocking_reason": "tensorflow_datasets is not available",
-  "can_attempt_download": false,
+  "bair_data_dir_exists": true,
+  "blocking_reason": null,
+  "can_attempt_download": true,
+  "current_conda_env": "tgpawb_tfds_py311",
   "data_dir": "/home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_tfds",
-  "disk_free_gib": 272.66502380371094,
+  "disk_free_gib": 189.03737258911133,
   "download_allowed": true,
+  "env_isolation": {
+    "tensorflow_expected_in_training_env": false,
+    "training_env_not_modified": true,
+    "uses_isolated_tfds_env": true
+  },
   "min_disk_required_gib": 80.0,
   "numpy_available": true,
   "partial_tfds_download_detected": false,
   "proxy_env": {},
-  "python_executable": "/home/ubuntu22/miniconda3/envs/env_isaaclab/bin/python",
+  "python_executable": "/home/ubuntu22/miniconda3/envs/tgpawb_tfds_py311/bin/python",
   "python_version": "3.11.15",
-  "ram_available_gib": 24.663436889648438,
-  "tensorflow_available": false,
-  "tensorflow_datasets_available": false,
-  "tensorflow_datasets_version": null,
-  "tensorflow_version": null,
-  "tfds_builder_available": false,
+  "ram_available_gib": 25.289756774902344,
+  "tensorflow_available": true,
+  "tensorflow_datasets_available": true,
+  "tensorflow_datasets_version": "4.9.10",
+  "tensorflow_version": "2.21.0",
+  "tfds_builder_available": true,
   "tfds_builder_error": null,
-  "top_level_entries": [],
-  "torch_available": true
+  "tfds_env": "tgpawb_tfds_py311",
+  "top_level_entries": [
+    "bair_robot_pushing_small",
+    "downloads"
+  ],
+  "torch_available": false,
+  "training_env": "env_isaaclab"
 }
