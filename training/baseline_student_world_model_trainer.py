@@ -1,4 +1,4 @@
-"""Train and summarize Step 8 Student world-model baselines."""
+"""Train and summarize Student world-model baseline comparisons."""
 
 from __future__ import annotations
 
@@ -12,19 +12,23 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
-from eval.eval_efficiency import token_retention_ratio
+from data.student_selector_dataset import student_selector_collate_fn
 from eval.eval_teacher_student_gap import compute_teacher_student_gap
 from models.selection_policies import (
     BaseSelectionPolicy,
     build_selection_policy,
     compute_selection_metrics,
+    compute_teacher_importance_selection_metrics,
 )
 from models.student_world_model import StudentWorldModel
 from models.teacher_world_model import TeacherWorldModel
 from models.token_compressor import TokenCompressor
 from training.losses import future_latent_mse
 from training.student_selector_trainer import set_seed
+from training.student_world_model_trainer import (
+    build_student_world_model_dataset,
+    summarize_student_world_model_dataset,
+)
 from training.teacher_trainer import grad_norm, load_checkpoint, resolve_device, target_from_future_tokens
 
 
@@ -33,25 +37,16 @@ SUMMARY_COLUMNS = [
     "seed",
     "final_loss",
     "student_future_mse",
-    "teacher_future_mse",
+    "teacher_mse",
     "student_teacher_ratio",
     "token_retention_ratio",
+    "selector_target_topk_overlap",
+    "selected_teacher_importance_mean",
+    "selected_vs_random_importance_gap",
     "selected_top1_hit_rate",
     "selected_topk_hit_rate",
     "selected_key_coverage",
 ]
-
-
-def _dataset_from_config(config: dict[str, Any]) -> StudentSelectorDataset:
-    data_cfg = config["data"]
-    return StudentSelectorDataset(
-        token_shard_dir=data_cfg["token_shard_dir"],
-        importance_shard_dir=data_cfg["importance_shard_dir"],
-        token_shard_glob=data_cfg.get("token_shard_glob", "tokens_shard_*.pt"),
-        importance_shard_glob=data_cfg.get("importance_shard_glob", "importance_shard_*.pt"),
-        require_key_token_mask=bool(data_cfg.get("require_key_token_mask", True)),
-        map_location="cpu",
-    )
 
 
 def _load_teacher(checkpoint_path: str | Path, device: torch.device) -> TeacherWorldModel:
@@ -88,6 +83,61 @@ def _model_configs_from_config(config: dict[str, Any]) -> tuple[dict[str, Any], 
     return compressor_config, student_world_model_config
 
 
+def _importance_from_batch(batch: dict[str, Any]) -> torch.Tensor | None:
+    if "importance_scores_norm" in batch:
+        return batch["importance_scores_norm"].float()
+    if "importance_scores" in batch:
+        return batch["importance_scores"].float()
+    return None
+
+
+def compute_baseline_selection_metrics(
+    selected_indices: torch.Tensor,
+    batch: dict[str, Any],
+    k: int,
+    num_tokens: int,
+    random_seed: int = 0,
+) -> dict[str, float | None]:
+    """Compute key-mask and teacher-importance metrics when available."""
+
+    metrics: dict[str, float | None] = {"token_retention_ratio": float(k) / float(num_tokens)}
+    key_token_mask = batch.get("key_token_mask")
+    if key_token_mask is not None:
+        metrics.update(compute_selection_metrics(selected_indices, key_token_mask.float().cpu(), num_tokens=num_tokens))
+    else:
+        metrics.update(
+            {
+                "selected_top1_hit_rate": None,
+                "selected_topk_hit_rate": None,
+                "selected_key_coverage": None,
+                "selected_key_fraction": None,
+            }
+        )
+
+    importance_scores = _importance_from_batch(batch)
+    if importance_scores is not None:
+        metrics.update(
+            compute_teacher_importance_selection_metrics(
+                selected_indices,
+                importance_scores,
+                k=k,
+                num_tokens=num_tokens,
+                random_seed=random_seed,
+            )
+        )
+    else:
+        metrics.update(
+            {
+                "selector_target_top1_overlap": None,
+                "selector_target_topk_overlap": None,
+                "selected_teacher_importance_mean": None,
+                "random_teacher_importance_mean": None,
+                "selected_vs_random_importance_gap": None,
+            }
+        )
+    return metrics
+
+
 def evaluate_baseline_models(
     policy: BaseSelectionPolicy,
     compressor: TokenCompressor,
@@ -96,7 +146,8 @@ def evaluate_baseline_models(
     loader: DataLoader,
     device: torch.device,
     topk: int,
-) -> dict[str, float]:
+    random_seed: int = 0,
+) -> dict[str, float | None]:
     compressor.eval()
     student_world_model.eval()
     teacher.eval()
@@ -105,6 +156,7 @@ def evaluate_baseline_models(
     element_count = 0
     all_indices = []
     all_masks = []
+    all_importance = []
     with torch.no_grad():
         for batch in loader:
             past_tokens = batch["past_tokens"].to(device)
@@ -122,21 +174,62 @@ def evaluate_baseline_models(
             teacher_sse += float((teacher_pred - target).pow(2).sum().item())
             element_count += int(target.numel())
             all_indices.append(selection["selected_indices"].detach().cpu())
-            all_masks.append(batch["key_token_mask"].float().cpu())
+            key_token_mask = batch.get("key_token_mask")
+            if key_token_mask is not None:
+                all_masks.append(key_token_mask.float().cpu())
+            importance_scores = _importance_from_batch(batch)
+            if importance_scores is not None:
+                all_importance.append(importance_scores.float().cpu())
 
     selected_indices = torch.cat(all_indices, dim=0)
-    key_mask = torch.cat(all_masks, dim=0)
+    num_tokens = int(selected_indices.max().item() + 1) if selected_indices.numel() else topk
+    importance_tensor = torch.cat(all_importance, dim=0) if all_importance else None
+    if all_masks:
+        key_mask = torch.cat(all_masks, dim=0)
+        num_tokens = int(key_mask.shape[1])
+    elif importance_tensor is not None:
+        num_tokens = int(importance_tensor.shape[1])
+
     student_mse = student_sse / float(max(element_count, 1))
     teacher_mse = teacher_sse / float(max(element_count, 1))
     gap_metrics = compute_teacher_student_gap(teacher_mse, student_mse)
-    selection_metrics = compute_selection_metrics(
-        selected_indices,
-        key_mask,
-        num_tokens=int(key_mask.shape[1]),
-    )
+    selection_metrics: dict[str, float | None] = {"token_retention_ratio": float(topk) / float(num_tokens)}
+    if all_masks:
+        selection_metrics.update(compute_selection_metrics(selected_indices, key_mask, num_tokens=num_tokens))
+    else:
+        selection_metrics.update(
+            {
+                "selected_top1_hit_rate": None,
+                "selected_topk_hit_rate": None,
+                "selected_key_coverage": None,
+                "selected_key_fraction": None,
+            }
+        )
+    if importance_tensor is not None:
+        selection_metrics.update(
+            compute_teacher_importance_selection_metrics(
+                selected_indices,
+                importance_tensor,
+                k=topk,
+                num_tokens=num_tokens,
+                random_seed=random_seed,
+            )
+        )
+    else:
+        selection_metrics.update(
+            {
+                "selector_target_top1_overlap": None,
+                "selector_target_topk_overlap": None,
+                "selected_teacher_importance_mean": None,
+                "random_teacher_importance_mean": None,
+                "selected_vs_random_importance_gap": None,
+            }
+        )
     return {
         "student_future_mse": student_mse,
+        "student_mse": student_mse,
         "teacher_future_mse": teacher_mse,
+        "teacher_mse": teacher_mse,
         **gap_metrics,
         **selection_metrics,
     }
@@ -204,11 +297,14 @@ class BaselineStudentWorldModelTrainer:
         self.eval_summary_path = self.run_dir / "eval_summary.json"
         self.gap_summary_path = self.run_dir / "teacher_student_gap_summary.json"
 
-        self.dataset = _dataset_from_config(config)
+        self.train_dataset = build_student_world_model_dataset(config, split="train")
+        self.eval_dataset = build_student_world_model_dataset(config, split="test")
+        self.train_dataset_summary = summarize_student_world_model_dataset(self.train_dataset, split="train")
+        self.eval_dataset_summary = summarize_student_world_model_dataset(self.eval_dataset, split="test")
         generator = torch.Generator()
         generator.manual_seed(int(config.get("seed", 42)) + self.seed)
         self.loader = DataLoader(
-            self.dataset,
+            self.train_dataset,
             batch_size=int(train_cfg.get("batch_size", 8)),
             shuffle=True,
             num_workers=int(train_cfg.get("num_workers", 0)),
@@ -217,7 +313,7 @@ class BaselineStudentWorldModelTrainer:
             generator=generator,
         )
         self.eval_loader = DataLoader(
-            self.dataset,
+            self.eval_dataset,
             batch_size=int(train_cfg.get("batch_size", 8)),
             shuffle=False,
             num_workers=0,
@@ -225,10 +321,16 @@ class BaselineStudentWorldModelTrainer:
             drop_last=False,
         )
 
+        learned_checkpoint = config.get("learned_selector", {}).get("checkpoint")
         self.policy = build_selection_policy(
             policy_name,
             seed=self.seed,
-            learned_selector_checkpoint=config["learned_selector"]["checkpoint"],
+            learned_selector_checkpoint=learned_checkpoint,
+        )
+        self.eval_policy = build_selection_policy(
+            policy_name,
+            seed=self.seed,
+            learned_selector_checkpoint=learned_checkpoint,
         )
         self.teacher = _load_teacher(config["teacher_reference"]["checkpoint"], self.device)
         self.compressor_config, self.student_world_model_config = _model_configs_from_config(config)
@@ -275,10 +377,12 @@ class BaselineStudentWorldModelTrainer:
                     )
                 self.optimizer.step()
 
-                selection_metrics = compute_selection_metrics(
+                selection_metrics = compute_baseline_selection_metrics(
                     selection["selected_indices"].detach().cpu(),
-                    batch["key_token_mask"].float().cpu(),
+                    batch,
+                    k=self.topk,
                     num_tokens=int(past_tokens.shape[1]),
+                    random_seed=self.seed,
                 )
                 metric = {
                     "step": int(step),
@@ -296,13 +400,13 @@ class BaselineStudentWorldModelTrainer:
                 if self.log_every > 0 and step % self.log_every == 0:
                     print(
                         "policy={policy} seed={seed} step={step} loss={loss:.8f} "
-                        "topk={topk:.3f} coverage={coverage:.3f}".format(
+                        "importance={importance} topk_overlap={topk_overlap}".format(
                             policy=self.policy_name,
                             seed=self.seed,
                             step=step,
                             loss=metric["loss"],
-                            topk=metric["selected_topk_hit_rate"],
-                            coverage=metric["selected_key_coverage"],
+                            importance=metric.get("selected_teacher_importance_mean"),
+                            topk_overlap=metric.get("selector_target_topk_overlap"),
                         )
                     )
                 if step >= self.max_steps:
@@ -310,13 +414,14 @@ class BaselineStudentWorldModelTrainer:
 
         losses = [metric["loss"] for metric in metrics]
         eval_metrics = evaluate_baseline_models(
-            self.policy,
+            self.eval_policy,
             self.compressor,
             self.student_world_model,
             self.teacher,
             self.eval_loader,
             self.device,
             topk=self.topk,
+            random_seed=self.seed,
         )
         summary = {
             "policy": self.policy_name,
@@ -327,25 +432,37 @@ class BaselineStudentWorldModelTrainer:
             "best_loss": min(losses),
             "loss_decreased": bool(losses[-1] < losses[0]),
             "student_future_mse": eval_metrics["student_future_mse"],
+            "student_mse": eval_metrics["student_mse"],
             "teacher_future_mse": eval_metrics["teacher_future_mse"],
+            "teacher_mse": eval_metrics["teacher_mse"],
             "student_teacher_gap": eval_metrics["student_teacher_gap"],
             "student_teacher_ratio": eval_metrics["student_teacher_ratio"],
             "token_retention_ratio": eval_metrics["token_retention_ratio"],
-            "selected_top1_hit_rate": eval_metrics["selected_top1_hit_rate"],
-            "selected_topk_hit_rate": eval_metrics["selected_topk_hit_rate"],
-            "selected_key_coverage": eval_metrics["selected_key_coverage"],
-            "selected_key_fraction": eval_metrics["selected_key_fraction"],
+            "selector_target_top1_overlap": eval_metrics.get("selector_target_top1_overlap"),
+            "selector_target_topk_overlap": eval_metrics.get("selector_target_topk_overlap"),
+            "selected_teacher_importance_mean": eval_metrics.get("selected_teacher_importance_mean"),
+            "random_teacher_importance_mean": eval_metrics.get("random_teacher_importance_mean"),
+            "selected_vs_random_importance_gap": eval_metrics.get("selected_vs_random_importance_gap"),
+            "selected_top1_hit_rate": eval_metrics.get("selected_top1_hit_rate"),
+            "selected_topk_hit_rate": eval_metrics.get("selected_topk_hit_rate"),
+            "selected_key_coverage": eval_metrics.get("selected_key_coverage"),
+            "selected_key_fraction": eval_metrics.get("selected_key_fraction"),
             "checkpoint_path": "",
             "metrics_path": str(self.metrics_path),
             "summary_path": str(self.summary_path),
             "eval_summary_path": str(self.eval_summary_path),
             "gap_summary_path": str(self.gap_summary_path),
             "device": str(self.device),
-            "dataset_size": len(self.dataset),
+            "dataset_size": len(self.train_dataset),
+            "train_num_samples": len(self.train_dataset),
+            "test_num_samples": len(self.eval_dataset),
             "run_dir": str(self.run_dir),
             "topk": int(self.topk),
-            "total_tokens": int(self.dataset[0]["past_tokens"].shape[0]),
+            "total_tokens": int(self.train_dataset[0]["past_tokens"].shape[0]),
+            "token_dim": int(self.train_dataset[0]["past_tokens"].shape[1]),
             "compressed_tokens": int(self.compressor_config["num_latents"]),
+            "train_dataset_summary": self.train_dataset_summary,
+            "test_dataset_summary": self.eval_dataset_summary,
         }
         checkpoint_path = self.checkpoint_dir / f"student_world_model_step_{len(metrics):06d}.pt"
         if self.save_checkpoints:
@@ -366,26 +483,44 @@ class BaselineStudentWorldModelTrainer:
         eval_summary = {
             "policy": self.policy_name,
             "seed": int(self.seed),
+            "split": "test",
             "checkpoint_path": summary["checkpoint_path"],
-            "dataset_size": len(self.dataset),
+            "dataset_size": len(self.eval_dataset),
+            "num_samples": len(self.eval_dataset),
+            "num_tokens": summary["total_tokens"],
             "device": str(self.device),
             **eval_metrics,
         }
-        gap_summary = dict(eval_summary)
-        gap_summary["teacher_checkpoint_path"] = str(self.config["teacher_reference"]["checkpoint"])
+        gap_summary = {
+            **eval_summary,
+            "dataset": str(self.config.get("data", {}).get("dataset", "unknown")),
+            "teacher_checkpoint_path": str(self.config["teacher_reference"]["checkpoint"]),
+        }
         self.summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         self.eval_summary_path.write_text(json.dumps(eval_summary, indent=2), encoding="utf-8")
         self.gap_summary_path.write_text(json.dumps(gap_summary, indent=2), encoding="utf-8")
         return summary
 
 
-def _finite(value: float) -> bool:
-    return math.isfinite(float(value))
+def _finite(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
-def _mean_std(values: list[float]) -> dict[str, float]:
+def _numeric_values(rows: list[dict[str, Any]], field: str) -> list[float]:
+    values = []
+    for row in rows:
+        value = row.get(field)
+        if _finite(value):
+            values.append(float(value))
+    return values
+
+
+def _mean_std(values: list[float]) -> dict[str, float | None]:
     if not values:
-        return {"mean": float("nan"), "std": float("nan")}
+        return {"mean": None, "std": None}
     return {
         "mean": float(statistics.mean(values)),
         "std": float(statistics.pstdev(values)) if len(values) > 1 else 0.0,
@@ -395,63 +530,130 @@ def _mean_std(values: list[float]) -> dict[str, float]:
 def aggregate_baseline_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     random_rows = [row for row in rows if row["policy"] == "random_k"]
     learned_rows = [row for row in rows if row["policy"] == "learned_selector"]
-    oracle_rows = [row for row in rows if row["policy"] == "oracle_key"]
+    oracle_rows = [row for row in rows if row["policy"] in {"teacher_importance_topk", "oracle_key"}]
     learned = learned_rows[0] if learned_rows else None
     oracle = oracle_rows[0] if oracle_rows else None
-    random_mse = _mean_std([float(row["student_future_mse"]) for row in random_rows])
-    random_coverage = _mean_std([float(row["selected_key_coverage"]) for row in random_rows])
 
-    learned_vs_random = {}
-    learned_vs_oracle = {}
-    sanity_checks = {
+    random_mse = _mean_std(_numeric_values(random_rows, "student_future_mse"))
+    random_importance = _mean_std(_numeric_values(random_rows, "selected_teacher_importance_mean"))
+    random_coverage = _mean_std(_numeric_values(random_rows, "selected_key_coverage"))
+
+    learned_vs_random: dict[str, Any] = {}
+    learned_vs_oracle: dict[str, Any] = {}
+    sanity_checks: dict[str, bool] = {
         "learned_selector_present": learned is not None,
         "random_k_present": bool(random_rows),
-        "oracle_key_present": oracle is not None,
-        "learned_topk_hit_rate": False,
-        "learned_key_coverage": False,
-        "learned_future_mse_le_random_mean": False,
-        "learned_ratio_finite": False,
+        "oracle_present": oracle is not None,
     }
     if learned is not None:
+        random_mse_mean = random_mse["mean"]
+        random_importance_mean = random_importance["mean"]
+        random_coverage_mean = random_coverage["mean"]
+        learned_mse = float(learned["student_future_mse"])
+        learned_importance = learned.get("selected_teacher_importance_mean")
+        learned_coverage = learned.get("selected_key_coverage")
+        learned_gap = learned.get("selected_vs_random_importance_gap")
         learned_vs_random = {
-            "student_future_mse_delta": float(learned["student_future_mse"]) - random_mse["mean"],
-            "selected_key_coverage_delta": float(learned["selected_key_coverage"]) - random_coverage["mean"],
-            "future_mse_lower_than_random_mean": float(learned["student_future_mse"]) <= random_mse["mean"],
-            "coverage_higher_than_random_mean": float(learned["selected_key_coverage"]) >= random_coverage["mean"],
+            "student_future_mse_delta": (
+                learned_mse - float(random_mse_mean) if random_mse_mean is not None else None
+            ),
+            "future_mse_lower_than_random_mean": (
+                learned_mse <= float(random_mse_mean) if random_mse_mean is not None else False
+            ),
+            "selected_teacher_importance_delta": (
+                float(learned_importance) - float(random_importance_mean)
+                if _finite(learned_importance) and random_importance_mean is not None
+                else None
+            ),
+            "selected_teacher_importance_higher_than_random_mean": (
+                float(learned_importance) > float(random_importance_mean)
+                if _finite(learned_importance) and random_importance_mean is not None
+                else False
+            ),
+            "selected_key_coverage_delta": (
+                float(learned_coverage) - float(random_coverage_mean)
+                if _finite(learned_coverage) and random_coverage_mean is not None
+                else None
+            ),
+            "coverage_higher_than_random_mean": (
+                float(learned_coverage) >= float(random_coverage_mean)
+                if _finite(learned_coverage) and random_coverage_mean is not None
+                else False
+            ),
         }
-        sanity_checks["learned_topk_hit_rate"] = float(learned["selected_topk_hit_rate"]) >= 0.8
-        sanity_checks["learned_key_coverage"] = float(learned["selected_key_coverage"]) >= 0.8
-        sanity_checks["learned_future_mse_le_random_mean"] = float(learned["student_future_mse"]) <= random_mse["mean"]
-        sanity_checks["learned_ratio_finite"] = _finite(float(learned["student_teacher_ratio"]))
+        sanity_checks["learned_ratio_finite"] = _finite(learned.get("student_teacher_ratio"))
+        if _finite(learned_importance) and random_importance_mean is not None:
+            sanity_checks["learned_selected_importance_gt_random_mean"] = (
+                float(learned_importance) > float(random_importance_mean)
+            )
+            sanity_checks["learned_selected_vs_random_gap_positive"] = float(learned_gap) > 0.0 if _finite(learned_gap) else False
+        else:
+            sanity_checks["learned_key_coverage"] = _finite(learned_coverage) and float(learned_coverage) >= 0.8
+            sanity_checks["learned_future_mse_le_random_mean"] = (
+                learned_mse <= float(random_mse_mean) if random_mse_mean is not None else False
+            )
         if oracle is not None:
+            oracle_importance = oracle.get("selected_teacher_importance_mean")
+            oracle_coverage = oracle.get("selected_key_coverage")
             learned_vs_oracle = {
-                "student_future_mse_gap": float(learned["student_future_mse"]) - float(oracle["student_future_mse"]),
-                "selected_key_coverage_gap": float(learned["selected_key_coverage"]) - float(oracle["selected_key_coverage"]),
+                "student_future_mse_gap": learned_mse - float(oracle["student_future_mse"]),
+                "selected_teacher_importance_gap": (
+                    float(learned_importance) - float(oracle_importance)
+                    if _finite(learned_importance) and _finite(oracle_importance)
+                    else None
+                ),
+                "selected_key_coverage_gap": (
+                    float(learned_coverage) - float(oracle_coverage)
+                    if _finite(learned_coverage) and _finite(oracle_coverage)
+                    else None
+                ),
             }
+            if _finite(learned_importance) and _finite(oracle_importance):
+                sanity_checks["oracle_importance_ge_learned"] = float(oracle_importance) >= float(learned_importance)
+            elif _finite(learned_coverage) and _finite(oracle_coverage):
+                sanity_checks["oracle_coverage_ge_learned"] = float(oracle_coverage) >= float(learned_coverage)
 
     return {
         "random_k_student_future_mse": random_mse,
+        "random_k_selected_teacher_importance_mean": random_importance,
         "random_k_selected_key_coverage": random_coverage,
         "learned_vs_random": learned_vs_random,
         "learned_vs_oracle": learned_vs_oracle,
         "sanity_gate": {
             "checks": sanity_checks,
-            "pass": all(sanity_checks.values()),
+            "pass": all(sanity_checks.values()) if sanity_checks else False,
         },
     }
 
 
+def _fmt(value: Any, precision: int = 8) -> str:
+    if value is None:
+        return "n/a"
+    if _finite(value):
+        return f"{float(value):.{precision}f}"
+    return str(value)
+
+
 def render_baseline_markdown(rows: list[dict[str, Any]], aggregate: dict[str, Any]) -> str:
     lines = [
-        "| policy | seed | final_loss | student_future_mse | teacher_future_mse | student_teacher_ratio | token_retention_ratio | selected_top1_hit_rate | selected_topk_hit_rate | selected_key_coverage |",
+        "| policy | seed | final_loss | student_future_mse | teacher_mse | student_teacher_ratio | token_retention_ratio | selector_target_topk_overlap | selected_teacher_importance_mean | selected_vs_random_importance_gap |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in sorted(rows, key=lambda item: (str(item["policy"]), int(item["seed"]))):
         lines.append(
-            "| {policy} | {seed} | {final_loss:.8f} | {student_future_mse:.8f} | "
-            "{teacher_future_mse:.8f} | {student_teacher_ratio:.6f} | {token_retention_ratio:.6f} | "
-            "{selected_top1_hit_rate:.6f} | {selected_topk_hit_rate:.6f} | {selected_key_coverage:.6f} |".format(
-                **row
+            "| {policy} | {seed} | {final_loss} | {student_future_mse} | {teacher_mse} | "
+            "{student_teacher_ratio} | {token_retention_ratio} | {selector_target_topk_overlap} | "
+            "{selected_teacher_importance_mean} | {selected_vs_random_importance_gap} |".format(
+                policy=row["policy"],
+                seed=row["seed"],
+                final_loss=_fmt(row.get("final_loss")),
+                student_future_mse=_fmt(row.get("student_future_mse")),
+                teacher_mse=_fmt(row.get("teacher_mse", row.get("teacher_future_mse"))),
+                student_teacher_ratio=_fmt(row.get("student_teacher_ratio"), precision=6),
+                token_retention_ratio=_fmt(row.get("token_retention_ratio"), precision=6),
+                selector_target_topk_overlap=_fmt(row.get("selector_target_topk_overlap"), precision=6),
+                selected_teacher_importance_mean=_fmt(row.get("selected_teacher_importance_mean"), precision=6),
+                selected_vs_random_importance_gap=_fmt(row.get("selected_vs_random_importance_gap"), precision=6),
             )
         )
     lines.extend(
@@ -491,7 +693,7 @@ def write_baseline_summaries(
         writer = csv.DictWriter(handle, fieldnames=SUMMARY_COLUMNS)
         writer.writeheader()
         for row in sorted(rows, key=lambda item: (str(item["policy"]), int(item["seed"]))):
-            writer.writerow({column: row[column] for column in SUMMARY_COLUMNS})
+            writer.writerow({column: row.get(column) for column in SUMMARY_COLUMNS})
     md_path.write_text(render_baseline_markdown(rows, aggregate), encoding="utf-8")
     return {
         "summary_json": str(json_path),

@@ -1,0 +1,89 @@
+stage: baseline_comparison_bair_videomae_smoke
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  dataset: BAIR
+  train_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_smoke/train
+  test_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_smoke/test
+  train_importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_smoke/train
+  test_importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_smoke/test
+  token_shard_glob: tokens_shard_*.pt
+  importance_shard_glob: importance_shard_*.pt
+  split_train: train
+  split_test: test
+  require_key_token_mask: false
+  max_train_samples: 100
+  max_test_samples: 16
+
+teacher_reference:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/teacher_bair_videomae_smoke_v1/checkpoints/teacher_world_model_step_000300.pt
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  pool: mean
+
+learned_selector:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/student_selector_bair_videomae_smoke_v1/checkpoints/student_selector_step_000100.pt
+  token_dim: 768
+  hidden_dim: 128
+  dropout: 0.0
+  use_task: false
+
+selection:
+  topk: 16
+  policies:
+    - random_k
+    - uniform_k
+    - teacher_importance_topk
+    - learned_selector
+
+compressor:
+  token_dim: 768
+  latent_dim: 512
+  hidden_dim: 512
+  num_latents: 16
+  dropout: 0.0
+  compressor_type: perceiver_like
+  num_heads: 8
+
+student_world_model:
+  latent_dim: 512
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  pool: mean
+
+training:
+  device: cuda_if_available
+  batch_size: 4
+  max_steps: 500
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  log_every: 100
+  checkpoint_every: 500
+  max_grad_norm: 1.0
+  future_loss_weight: 1.0
+  repeat_random_seeds:
+    random_k: [0, 1, 2]
+    uniform_k: [0]
+    teacher_importance_topk: [0]
+    learned_selector: [0]
+
+resource_limits:
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: baseline_comparison_bair_videomae_smoke_v1
+  save_checkpoint: true
+  save_metrics: true
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/baseline_comparison_bair_videomae_smoke_v1/baseline_summary.json
+  summary_csv: /home/ubuntu22/tgpawb_world_model/runs/baseline_comparison_bair_videomae_smoke_v1/baseline_summary.csv
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/baseline_comparison_bair_videomae_smoke_v1/baseline_summary.md
