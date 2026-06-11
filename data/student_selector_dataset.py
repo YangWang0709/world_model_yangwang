@@ -101,7 +101,6 @@ class StudentSelectorDataset(Dataset):
                 if key_mask is None:
                     if require_key_token_mask:
                         raise KeyError(f"Sample {sample_id!r} is missing key_token_mask")
-                    key_mask = torch.zeros_like(shard["importance_scores"][row].float())
 
                 importance_scores = shard["importance_scores"][row].float().contiguous()
                 importance_scores_norm = shard["importance_scores_norm"][row].float().contiguous()
@@ -119,7 +118,8 @@ class StudentSelectorDataset(Dataset):
                         "future_tokens": token_sample["future_tokens"],
                         "importance_scores": importance_scores,
                         "importance_scores_norm": importance_scores_norm,
-                        "key_token_mask": key_mask.float().contiguous(),
+                        "key_token_mask": key_mask.float().contiguous() if key_mask is not None else None,
+                        "has_key_token_mask": key_mask is not None,
                         "sample_id": sample_id,
                         "task_text": token_sample["task_text"],
                         "metadata": metadata,
@@ -154,7 +154,12 @@ def student_selector_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
     future_tokens = torch.stack([item["future_tokens"] for item in batch], dim=0)
     importance_scores = torch.stack([item["importance_scores"] for item in batch], dim=0)
     importance_scores_norm = torch.stack([item["importance_scores_norm"] for item in batch], dim=0)
-    key_token_mask = torch.stack([item["key_token_mask"] for item in batch], dim=0)
+    has_key_token_mask = all(bool(item.get("has_key_token_mask", False)) for item in batch)
+    key_token_mask = (
+        torch.stack([item["key_token_mask"] for item in batch], dim=0)
+        if has_key_token_mask
+        else None
+    )
     if past_tokens.ndim != 3:
         raise ValueError(f"past_tokens must collate to [B, N, D], got {tuple(past_tokens.shape)}")
     if future_tokens.ndim not in (2, 3):
@@ -163,7 +168,7 @@ def student_selector_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         raise ValueError("importance_scores must have shape [B, N] matching past_tokens")
     if importance_scores_norm.shape != past_tokens.shape[:2]:
         raise ValueError("importance_scores_norm must have shape [B, N] matching past_tokens")
-    if key_token_mask.shape != past_tokens.shape[:2]:
+    if key_token_mask is not None and key_token_mask.shape != past_tokens.shape[:2]:
         raise ValueError("key_token_mask must have shape [B, N] matching past_tokens")
     return {
         "past_tokens": past_tokens,
@@ -171,6 +176,7 @@ def student_selector_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "importance_scores": importance_scores,
         "importance_scores_norm": importance_scores_norm,
         "key_token_mask": key_token_mask,
+        "has_key_token_mask": has_key_token_mask,
         "sample_ids": [item["sample_id"] for item in batch],
         "task_texts": [item["task_text"] for item in batch],
         "metadata": [item["metadata"] for item in batch],

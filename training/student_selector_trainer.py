@@ -12,7 +12,12 @@ from torch.utils.data import DataLoader
 
 from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
 from models.attention_selector import AttentionSelector
-from training.losses import importance_regression_loss, ranking_margin_loss, topk_coverage_metrics
+from training.losses import (
+    importance_regression_loss,
+    importance_topk_metrics,
+    ranking_margin_loss,
+    topk_coverage_metrics,
+)
 from training.teacher_trainer import grad_norm, resolve_device
 
 
@@ -86,23 +91,17 @@ def evaluate_selector_on_loader(
             scores = torch.sigmoid(logits).detach().cpu()
             all_scores.append(scores)
             all_targets.append(batch["importance_scores_norm"].float().cpu())
-            all_masks.append(batch["key_token_mask"].float().cpu())
+            if batch["key_token_mask"] is not None:
+                all_masks.append(batch["key_token_mask"].float().cpu())
     scores = torch.cat(all_scores, dim=0)
     targets = torch.cat(all_targets, dim=0)
-    masks = torch.cat(all_masks, dim=0)
-    coverage = topk_coverage_metrics(scores, masks, k=topk)
-    return {
-        "importance_mse": float(torch.nn.functional.mse_loss(scores, targets).item()),
-        "score_mean": float(scores.mean().item()),
-        "score_std": float(scores.std(unbiased=False).item()) if scores.numel() > 1 else 0.0,
-        "score_min": float(scores.min().item()),
-        "score_max": float(scores.max().item()),
-        "target_mean": float(targets.mean().item()),
-        "target_std": float(targets.std(unbiased=False).item()) if targets.numel() > 1 else 0.0,
-        "target_min": float(targets.min().item()),
-        "target_max": float(targets.max().item()),
-        **coverage,
-    }
+    metrics = importance_topk_metrics(scores, targets, k=topk)
+    metrics["num_samples"] = int(scores.shape[0])
+    metrics["num_tokens"] = int(scores.shape[1])
+    if all_masks:
+        masks = torch.cat(all_masks, dim=0)
+        metrics.update(topk_coverage_metrics(scores, masks, k=topk))
+    return metrics
 
 
 class StudentSelectorTrainer:
@@ -127,6 +126,7 @@ class StudentSelectorTrainer:
         self.ranking_loss_weight = float(train_cfg.get("ranking_loss_weight", 0.1))
         self.ranking_margin = float(train_cfg.get("ranking_margin", 0.1))
         self.topk = int(train_cfg.get("topk", 4))
+        self.require_key_token_mask = bool(config["data"].get("require_key_token_mask", True))
 
         self.run_dir = Path(output_cfg["run_root"]) / output_cfg["run_name"]
         self.checkpoint_dir = self.run_dir / "checkpoints"
@@ -180,7 +180,6 @@ class StudentSelectorTrainer:
                 step += 1
                 past_tokens = batch["past_tokens"].to(self.device)
                 targets = batch["importance_scores_norm"].to(self.device)
-                key_mask = batch["key_token_mask"].to(self.device)
                 logits = self.model(past_tokens)
                 score_probs = torch.sigmoid(logits)
                 imp_loss = importance_regression_loss(
@@ -188,7 +187,11 @@ class StudentSelectorTrainer:
                     targets,
                     loss_type=self.importance_loss_type,
                 )
-                rank_loss = ranking_margin_loss(score_probs, key_mask, margin=self.ranking_margin)
+                key_mask = batch["key_token_mask"].to(self.device) if batch["key_token_mask"] is not None else None
+                if key_mask is not None and self.ranking_loss_weight > 0.0:
+                    rank_loss = ranking_margin_loss(score_probs, key_mask, margin=self.ranking_margin)
+                else:
+                    rank_loss = score_probs.sum() * 0.0
                 loss = self.importance_loss_weight * imp_loss + self.ranking_loss_weight * rank_loss
                 if not torch.isfinite(loss):
                     raise FloatingPointError(f"Non-finite selector loss at step {step}: {loss.item()}")
@@ -200,7 +203,11 @@ class StudentSelectorTrainer:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-                coverage = topk_coverage_metrics(score_probs.detach().cpu(), key_mask.detach().cpu(), k=self.topk)
+                metric_scores = score_probs.detach().cpu()
+                metric_targets = targets.detach().cpu()
+                metric_values = importance_topk_metrics(metric_scores, metric_targets, k=self.topk)
+                if key_mask is not None:
+                    metric_values.update(topk_coverage_metrics(metric_scores, key_mask.detach().cpu(), k=self.topk))
                 metric = {
                     "step": int(step),
                     "loss": float(loss.item()),
@@ -208,25 +215,38 @@ class StudentSelectorTrainer:
                     "ranking_loss": float(rank_loss.item()),
                     "grad_norm": float(norm_before_clip),
                     "lr": float(self.optimizer.param_groups[0]["lr"]),
-                    **coverage,
+                    **metric_values,
                 }
                 metrics.append(metric)
                 if self.save_metrics:
                     with self.metrics_path.open("a", encoding="utf-8") as handle:
                         handle.write(json.dumps(metric) + "\n")
                 if self.log_every > 0 and step % self.log_every == 0:
-                    print(
-                        "step={step} loss={loss:.8f} imp={imp:.8f} rank={rank:.8f} "
-                        "gap={gap:.6f} top1={top1:.3f} topk={topk:.3f}".format(
-                            step=step,
-                            loss=metric["loss"],
-                            imp=metric["importance_loss"],
-                            rank=metric["ranking_loss"],
-                            gap=metric["key_vs_non_key_gap"],
-                            top1=metric["top1_hit_rate"],
-                            topk=metric["topk_hit_rate"],
+                    if "key_vs_non_key_gap" in metric:
+                        print(
+                            "step={step} loss={loss:.8f} imp={imp:.8f} rank={rank:.8f} "
+                            "gap={gap:.6f} top1={top1:.3f} topk={topk:.3f}".format(
+                                step=step,
+                                loss=metric["loss"],
+                                imp=metric["importance_loss"],
+                                rank=metric["ranking_loss"],
+                                gap=metric["key_vs_non_key_gap"],
+                                top1=metric["top1_hit_rate"],
+                                topk=metric["topk_hit_rate"],
+                            )
                         )
-                    )
+                    else:
+                        print(
+                            "step={step} loss={loss:.8f} imp={imp:.8f} "
+                            "mse={mse:.8f} corr={corr:.4f} target_topk={topk:.3f}".format(
+                                step=step,
+                                loss=metric["loss"],
+                                imp=metric["importance_loss"],
+                                mse=metric["importance_mse"],
+                                corr=metric["pearson_corr_mean"],
+                                topk=metric["target_topk_overlap"],
+                            )
+                        )
                 if step >= self.max_steps:
                     break
 
@@ -238,20 +258,32 @@ class StudentSelectorTrainer:
             "final_loss": losses[-1],
             "best_loss": min(losses),
             "loss_decreased": bool(losses[-1] < losses[0]),
-            "final_key_score_mean": eval_metrics["key_score_mean"],
-            "final_non_key_score_mean": eval_metrics["non_key_score_mean"],
-            "final_key_vs_non_key_gap": eval_metrics["key_vs_non_key_gap"],
-            "final_top1_hit_rate": eval_metrics["top1_hit_rate"],
-            "final_topk_hit_rate": eval_metrics["topk_hit_rate"],
             "final_importance_mse": eval_metrics["importance_mse"],
+            "final_importance_mae": eval_metrics["importance_mae"],
+            "final_pearson_corr_mean": eval_metrics["pearson_corr_mean"],
+            "final_target_top1_overlap": eval_metrics["target_top1_overlap"],
+            "final_target_topk_overlap": eval_metrics["target_topk_overlap"],
+            "final_selected_teacher_importance_mean": eval_metrics["selected_teacher_importance_mean"],
             "checkpoint_path": "",
             "metrics_path": str(self.metrics_path),
             "summary_path": str(self.summary_path),
             "device": str(self.device),
             "dataset_size": len(self.dataset),
+            "num_samples": eval_metrics["num_samples"],
+            "num_tokens": eval_metrics["num_tokens"],
             "run_dir": str(self.run_dir),
             "topk": int(self.topk),
         }
+        if "key_score_mean" in eval_metrics:
+            summary.update(
+                {
+                    "final_key_score_mean": eval_metrics["key_score_mean"],
+                    "final_non_key_score_mean": eval_metrics["non_key_score_mean"],
+                    "final_key_vs_non_key_gap": eval_metrics["key_vs_non_key_gap"],
+                    "final_top1_hit_rate": eval_metrics["top1_hit_rate"],
+                    "final_topk_hit_rate": eval_metrics["topk_hit_rate"],
+                }
+            )
 
         checkpoint_path = self.checkpoint_dir / f"student_selector_step_{len(metrics):06d}.pt"
         if self.save_checkpoints:

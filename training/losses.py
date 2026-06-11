@@ -115,3 +115,74 @@ def topk_coverage_metrics(
         "top1_hit_rate": float(sum(top1_hits) / len(top1_hits)) if top1_hits else 0.0,
         "topk_hit_rate": float(sum(topk_hits) / len(topk_hits)) if topk_hits else 0.0,
     }
+
+
+def pearson_corr_mean(pred_scores: torch.Tensor, target_scores: torch.Tensor) -> torch.Tensor:
+    """Mean per-sample Pearson correlation with constant rows mapped to zero."""
+
+    if pred_scores.shape != target_scores.shape:
+        raise ValueError(
+            f"pred_scores shape {tuple(pred_scores.shape)} must match target_scores {tuple(target_scores.shape)}"
+        )
+    if pred_scores.ndim != 2:
+        raise ValueError(f"pred_scores must be [B, N], got {tuple(pred_scores.shape)}")
+    pred_centered = pred_scores.float() - pred_scores.float().mean(dim=1, keepdim=True)
+    target_centered = target_scores.float() - target_scores.float().mean(dim=1, keepdim=True)
+    numerator = (pred_centered * target_centered).sum(dim=1)
+    pred_norm = pred_centered.pow(2).sum(dim=1).sqrt()
+    target_norm = target_centered.pow(2).sum(dim=1).sqrt()
+    denom = pred_norm * target_norm
+    corr = torch.zeros_like(numerator)
+    valid = denom > torch.finfo(pred_scores.float().dtype).eps
+    corr[valid] = numerator[valid] / denom[valid]
+    return corr.mean()
+
+
+def importance_topk_metrics(
+    pred_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    k: int,
+) -> dict[str, float]:
+    """Evaluate selector scores against teacher importance labels without key-token masks."""
+
+    if pred_scores.shape != target_scores.shape:
+        raise ValueError(
+            f"pred_scores shape {tuple(pred_scores.shape)} must match target_scores {tuple(target_scores.shape)}"
+        )
+    if pred_scores.ndim != 2:
+        raise ValueError(f"pred_scores must be [B, N], got {tuple(pred_scores.shape)}")
+    if k <= 0 or k > pred_scores.shape[1]:
+        raise ValueError(f"k must be in [1, {pred_scores.shape[1]}], got {k}")
+
+    pred = pred_scores.float()
+    target = target_scores.float()
+    pred_top1 = torch.topk(pred, k=1, dim=1).indices.squeeze(1)
+    target_top1 = torch.topk(target, k=1, dim=1).indices.squeeze(1)
+    pred_topk = torch.topk(pred, k=k, dim=1).indices
+    target_topk = torch.topk(target, k=k, dim=1).indices
+
+    topk_overlaps = []
+    selected_values = []
+    for row, pred_indices, target_indices in zip(target, pred_topk, target_topk):
+        pred_set = set(int(index) for index in pred_indices.tolist())
+        target_set = set(int(index) for index in target_indices.tolist())
+        topk_overlaps.append(len(pred_set.intersection(target_set)) / float(k))
+        selected_values.append(row[pred_indices].mean())
+
+    return {
+        "importance_mse": float(F.mse_loss(pred, target).item()),
+        "importance_mae": float(F.l1_loss(pred, target).item()),
+        "pearson_corr_mean": float(pearson_corr_mean(pred, target).item()),
+        "target_top1_overlap": float((pred_top1 == target_top1).float().mean().item()),
+        "target_topk_overlap": float(sum(topk_overlaps) / len(topk_overlaps)) if topk_overlaps else 0.0,
+        "selected_teacher_importance_mean": float(torch.stack(selected_values).mean().item()) if selected_values else 0.0,
+        "random_teacher_importance_mean": float(target.mean().item()),
+        "score_mean": float(pred.mean().item()),
+        "score_std": float(pred.std(unbiased=False).item()) if pred.numel() > 1 else 0.0,
+        "score_min": float(pred.min().item()),
+        "score_max": float(pred.max().item()),
+        "target_mean": float(target.mean().item()),
+        "target_std": float(target.std(unbiased=False).item()) if target.numel() > 1 else 0.0,
+        "target_min": float(target.min().item()),
+        "target_max": float(target.max().item()),
+    }

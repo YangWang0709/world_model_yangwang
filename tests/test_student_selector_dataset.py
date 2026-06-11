@@ -64,3 +64,47 @@ def test_student_selector_dataset_aligns_by_sample_id(tmp_path: Path) -> None:
     assert batch["importance_scores"].shape == (2, 3)
     assert batch["importance_scores_norm"].shape == (2, 3)
     assert batch["key_token_mask"].shape == (2, 3)
+
+
+def test_student_selector_dataset_allows_missing_key_mask_when_not_required(tmp_path: Path) -> None:
+    token_dir = tmp_path / "tokens"
+    importance_dir = tmp_path / "importance"
+    token_shard = {
+        "schema_version": TOKEN_SHARD_SCHEMA_VERSION,
+        "encoder_name": "videomae",
+        "encoder_config": {"num_tokens": 4, "token_dim": 2},
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "split": "real_minimal",
+        "sample_ids": ["sample_0"],
+        "task_texts": ["task 0"],
+        "past_tokens": torch.randn(1, 4, 2),
+        "future_tokens": torch.randn(1, 4, 2),
+        "metadata": [{"sample_id": "sample_0"}],
+    }
+    importance_shard = {
+        "schema_version": IMPORTANCE_SHARD_SCHEMA_VERSION,
+        "importance_method": "teacher_token_occlusion",
+        "teacher_checkpoint": "teacher.pt",
+        "teacher_config": {},
+        "source_token_shard": "tokens.pt",
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "split": "real_minimal",
+        "sample_ids": ["sample_0"],
+        "task_texts": ["task 0"],
+        "importance_scores": torch.rand(1, 4),
+        "importance_scores_norm": torch.rand(1, 4),
+        "base_losses": torch.zeros(1),
+        "masked_losses": torch.ones(1, 4),
+        "metadata": [{"sample_id": "sample_0"}],
+        "mask_config": {"mask_mode": "zero"},
+    }
+    save_token_shard(token_dir / "tokens_shard_000000.pt", token_shard)
+    save_importance_shard(importance_dir / "importance_shard_000000.pt", importance_shard)
+
+    dataset = StudentSelectorDataset(token_dir, importance_dir, require_key_token_mask=False)
+    batch = student_selector_collate_fn([dataset[0]])
+
+    assert dataset[0]["key_token_mask"] is None
+    assert dataset[0]["has_key_token_mask"] is False
+    assert batch["key_token_mask"] is None
+    assert batch["has_key_token_mask"] is False

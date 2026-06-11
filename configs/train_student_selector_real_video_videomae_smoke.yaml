@@ -1,0 +1,44 @@
+stage: student_selector_real_video_videomae_smoke
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/real_video_videomae_smoke
+  importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/real_video_videomae_teacher_smoke
+  token_shard_glob: tokens_shard_*.pt
+  importance_shard_glob: importance_shard_*.pt
+  split: real_minimal
+  require_key_token_mask: false
+  max_samples: 8
+
+model:
+  token_dim: 768
+  hidden_dim: 256
+  dropout: 0.0
+  use_task: false
+
+training:
+  device: cuda_if_available
+  batch_size: 2
+  max_steps: 300
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  log_every: 1
+  checkpoint_every: 300
+  max_grad_norm: 1.0
+  importance_loss_type: mse
+  importance_loss_weight: 1.0
+  ranking_loss_weight: 0.0
+  topk: 16
+
+resource_limits:
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: student_selector_real_video_videomae_smoke_v1
+  save_checkpoint: true
+  save_metrics: true
