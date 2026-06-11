@@ -1,0 +1,23 @@
+stage: export_bair_context_windows_1000_128
+project_root: /home/ubuntu22/tgpawb_world_model
+input:
+  tfds_name: bair_robot_pushing_small
+  tfds_version: "2.0.0"
+  data_dir: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_tfds
+dataset:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/bair_context_windows_1000_128
+  train_samples: 1000
+  test_samples: 128
+  split_names: [train, test]
+  context_len: 8
+  current_len: 4
+  future_len: 4
+  image_size: 224
+  camera: image_main
+  include_action: true
+  include_endeffector_pos: true
+  use_action_as_input: false
+  use_endeffector_as_input: false
+  overwrite: false
+environment:
+  tfds_env: /home/ubuntu22/miniconda3/envs/tgpawb_tfds_py311

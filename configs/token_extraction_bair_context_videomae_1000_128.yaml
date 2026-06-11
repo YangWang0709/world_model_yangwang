@@ -1,0 +1,38 @@
+stage: token_extraction_bair_context_videomae_1000_128
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+dataset:
+  name: bair_robot_pushing_small_context_windows
+  root: /home/ubuntu22/tgpawb_world_model/data/bair_context_windows_1000_128
+  train_metadata_file: /home/ubuntu22/tgpawb_world_model/data/bair_context_windows_1000_128/train/metadata.jsonl
+  test_metadata_file: /home/ubuntu22/tgpawb_world_model/data/bair_context_windows_1000_128/test/metadata.jsonl
+  split_names: [train, test]
+  max_train_samples: 1000
+  max_test_samples: 128
+encoder:
+  name: videomae
+  model_name_or_path: /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  cache_dir: /home/ubuntu22/tgpawb_world_model/model_cache/huggingface
+  allow_download: false
+  local_files_only: true
+  device: cuda_if_available
+  image_size: 224
+  output_mode: last_hidden_state
+  ignore_mismatched_sizes: true
+  context_num_frames: 8
+  short_num_frames: 4
+fallback:
+  allow_dummy_fallback: false
+extraction:
+  batch_size: 1
+  num_workers: 0
+  device: cuda_if_available
+  shard_size: 4
+  seed: 42
+  output_root: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/test
+resource_limits:
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true

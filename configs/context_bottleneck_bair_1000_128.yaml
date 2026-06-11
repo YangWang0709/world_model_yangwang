@@ -1,0 +1,165 @@
+stage: context_bottleneck_bair_1000_128
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+environments:
+  conda_executable: /home/ubuntu22/miniconda3/bin/conda
+  tfds_export_env: tgpawb_tfds_py311
+  train_env: env_isaaclab
+
+configs:
+  export_context_windows: configs/export_bair_context_windows_1000_128.yaml
+  token_extraction: configs/token_extraction_bair_context_videomae_1000_128.yaml
+  train_context_teacher: configs/train_context_teacher_bair_1000_128.yaml
+  generate_context_importance: configs/generate_context_importance_bair_1000_128.yaml
+  train_unified_context_selector: configs/train_unified_context_selector_bair_1000_128.yaml
+  train_context_bottleneck_world_model: configs/train_context_bottleneck_world_model_bair_1000_128.yaml
+  baseline_context_bottleneck: configs/baseline_context_bottleneck_bair_1000_128.yaml
+
+dataset:
+  name: bair_robot_pushing_small_context_windows
+  tfds_data_dir: /home/ubuntu22/tgpawb_world_model/data/bair_robot_pushing_small_tfds
+  output_dir: /home/ubuntu22/tgpawb_world_model/data/bair_context_windows_1000_128
+  train_samples: 1000
+  test_samples: 128
+  context_len: 8
+  current_len: 4
+  future_len: 4
+  image_size: 224
+  include_action: true
+  include_endeffector_pos: true
+  use_action_as_input: false
+  use_endeffector_as_input: false
+
+encoder:
+  name: videomae
+  model_name_or_path: /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  cache_dir: /home/ubuntu22/tgpawb_world_model/model_cache/huggingface
+  allow_download: false
+  local_files_only: true
+  fallback: none
+  image_size: 224
+  context_num_frames: 8
+  current_num_frames: 4
+  future_num_frames: 4
+
+tokens:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/test
+  shard_size: 4
+  batch_size: 1
+  num_workers: 0
+
+teacher:
+  run_name: context_teacher_bair_1000_128_v1
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/context_teacher_bair_1000_128_v1/checkpoints/context_teacher_step_001200.pt
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  current_pool: mean
+  context_pool: mean
+  fusion: concat_mlp
+  batch_size: 4
+  max_steps: 1200
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  seed: 42
+
+importance:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/test
+  batch_size: 1
+  token_chunk_size: 32
+  normalize: minmax_per_sample
+  mask_mode: zero
+  occlude_only: context_tokens
+  keep_current_full: true
+
+unified_selector:
+  run_name: unified_context_selector_bair_1000_128_v1
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/unified_context_selector_bair_1000_128_v1/checkpoints/unified_selector_context_step_001000.pt
+  init_from_state_selector: true
+  state_selector_checkpoint: /home/ubuntu22/tgpawb_world_model/runs/student_selector_bair_videomae_1000_128_weighted_mse_multiseed_v1/weighted_mse_alpha2_seed0/checkpoints/student_selector_step_001000.pt
+  allow_random_init_if_incompatible: true
+  token_dim: 768
+  hidden_dim: 256
+  dropout: 0.0
+  supported_modes: [context, state_legacy]
+  train_mode: context
+  train_state_mode: false
+  condition_on_current: true
+  current_pool: mean
+  role_embedding: true
+  temporal_position_embedding: true
+  max_context_tokens: 2048
+  loss_type: weighted_mse
+  alpha: 2.0
+  batch_size: 4
+  max_steps: 1000
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  seed: 42
+
+context_bottleneck_world_model:
+  run_name: context_bottleneck_world_model_bair_1000_128_v1
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/context_bottleneck_world_model_bair_1000_128_v1/checkpoints/context_bottleneck_world_model_step_001200.pt
+  current_encoder: mean_pool_full_current
+  current_token_drop: false
+  context_selection:
+    mode: learned_context_topk
+    retention_ratio: 0.04081632653061224
+    topk_auto: true
+    fallback_topk_if_unknown: 32
+  context_memory:
+    mode: mean_pool_selected_context
+    also_eval_score_weighted_pool: true
+  fusion:
+    mode: concat_current_context_mlp
+  output_dim: 768
+  hidden_dim: 512
+  num_layers: 2
+  batch_size: 4
+  max_steps: 1200
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  seed: 42
+
+baselines:
+  enabled: true
+  run_name: context_bottleneck_baseline_bair_1000_128_v1
+  policies:
+    - current_only
+    - full_context_teacher_reference
+    - random_context_topK
+    - uniform_context_topK
+    - teacher_context_importance_topK
+    - learned_context_selector_topK
+    - hybrid_context_learned_uniform
+  random_seeds: [0, 1, 2]
+  learned_seeds: [0, 1, 2]
+  uniform_seeds: [0]
+  oracle_seeds: [0]
+  current_only_seeds: [0]
+  retention_ratio: 0.04081632653061224
+  max_steps: 1200
+  batch_size: 4
+  num_workers: 0
+
+resource_limits:
+  min_free_disk_gb: 100
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: context_bottleneck_bair_1000_128_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/context_bottleneck_bair_1000_128_v1/context_bottleneck_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/context_bottleneck_bair_1000_128_v1/context_bottleneck_summary.md

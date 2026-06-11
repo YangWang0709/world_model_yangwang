@@ -1,0 +1,27 @@
+stage: generate_context_importance_bair_1000_128
+seed: 42
+data:
+  train_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/train
+  test_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/test
+  shard_glob: context_tokens_shard_*.pt
+  max_train_samples: 1000
+  max_test_samples: 128
+teacher:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/context_teacher_bair_1000_128_v1/checkpoints/context_teacher_step_001200.pt
+importance:
+  method: context_teacher_token_occlusion
+  mask_mode: zero
+  mask_value: 0.0
+  batch_size: 1
+  token_chunk_size: 32
+  device: cuda_if_available
+  clamp_negative_importance: false
+  normalize: minmax_per_sample
+  occlude_only: context_tokens
+  keep_current_full: true
+output:
+  output_root: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128
+  train_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/train
+  test_output_dir: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/test
+  summary_path: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/importance_summary.json
+  overwrite: true

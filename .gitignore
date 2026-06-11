@@ -23,6 +23,9 @@ data/bair_robot_pushing_small_tfds/
 data/bair_robot_pushing_small_subset/
 data/bair_robot_pushing_small_subset_500_64/
 data/bair_robot_pushing_small_subset_1000_128/
+data/bair_context_windows_1000_128/
+data/context_token_shards/
+data/context_importance_shards/
 *.mp4
 *.avi
 *.mov

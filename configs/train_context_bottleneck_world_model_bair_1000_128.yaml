@@ -1,0 +1,42 @@
+stage: train_context_bottleneck_world_model_bair_1000_128
+seed: 42
+data:
+  train_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/train
+  test_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/test
+  train_importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/train
+  test_importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_importance_shards/bair_context_teacher_1000_128/test
+  token_shard_glob: context_tokens_shard_*.pt
+  importance_shard_glob: importance_shard_*.pt
+  max_train_samples: 1000
+  max_test_samples: 128
+teacher_reference:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/context_teacher_bair_1000_128_v1/checkpoints/context_teacher_step_001200.pt
+selector:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/unified_context_selector_bair_1000_128_v1/checkpoints/unified_selector_context_step_001000.pt
+model:
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  context_memory_mode: mean_pool_selected_context
+selection:
+  policy: learned_context_selector_topK
+  topk_auto_by_retention_ratio: true
+  retention_ratio: 0.04081632653061224
+  fallback_topk_if_unknown: 32
+  use_sigmoid_scores: true
+  current_tokens_dropped: false
+training:
+  device: cuda_if_available
+  batch_size: 4
+  max_steps: 1200
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  max_grad_norm: 1.0
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: context_bottleneck_world_model_bair_1000_128_v1
+  save_checkpoint: true
+  save_metrics: true

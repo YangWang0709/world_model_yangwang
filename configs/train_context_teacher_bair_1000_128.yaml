@@ -1,0 +1,30 @@
+stage: train_context_teacher_bair_1000_128
+seed: 42
+data:
+  train_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/train
+  test_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/context_token_shards/bair_context_videomae_1000_128/test
+  shard_glob: context_tokens_shard_*.pt
+  max_train_samples: 1000
+  max_test_samples: 128
+model:
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  current_pool: mean
+  context_pool: mean
+  fusion: concat_mlp
+training:
+  device: cuda_if_available
+  batch_size: 4
+  max_steps: 1200
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  max_grad_norm: 1.0
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: context_teacher_bair_1000_128_v1
+  save_checkpoint: true
+  save_metrics: true
