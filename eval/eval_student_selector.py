@@ -25,6 +25,7 @@ from training.train_student_selector import load_yaml
 def evaluate_student_selector(
     config: dict[str, Any],
     checkpoint_path: str | Path,
+    split: str = "test",
 ) -> dict[str, Any]:
     train_cfg = config["training"]
     data_cfg = config["data"]
@@ -34,12 +35,28 @@ def evaluate_student_selector(
     model = AttentionSelector(**checkpoint["model_config"])
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
+    if split == "train":
+        token_shard_dir = data_cfg.get("train_token_shard_dir", data_cfg.get("token_shard_dir"))
+        importance_shard_dir = data_cfg.get("train_importance_shard_dir", data_cfg.get("importance_shard_dir"))
+        max_samples = data_cfg.get("max_train_samples", data_cfg.get("max_samples"))
+    elif split == "test":
+        token_shard_dir = data_cfg.get("test_token_shard_dir", data_cfg.get("token_shard_dir"))
+        importance_shard_dir = data_cfg.get("test_importance_shard_dir", data_cfg.get("importance_shard_dir"))
+        max_samples = data_cfg.get("max_test_samples", data_cfg.get("max_samples"))
+    else:
+        raise ValueError(f"Unsupported eval split: {split!r}")
+    if token_shard_dir is None:
+        raise KeyError(f"data.{split}_token_shard_dir or data.token_shard_dir is required")
+    if importance_shard_dir is None:
+        raise KeyError(f"data.{split}_importance_shard_dir or data.importance_shard_dir is required")
+
     dataset = StudentSelectorDataset(
-        token_shard_dir=data_cfg["token_shard_dir"],
-        importance_shard_dir=data_cfg["importance_shard_dir"],
+        token_shard_dir=token_shard_dir,
+        importance_shard_dir=importance_shard_dir,
         token_shard_glob=data_cfg.get("token_shard_glob", "tokens_shard_*.pt"),
         importance_shard_glob=data_cfg.get("importance_shard_glob", "importance_shard_*.pt"),
         require_key_token_mask=bool(data_cfg.get("require_key_token_mask", True)),
+        max_samples=int(max_samples) if max_samples is not None else None,
     )
     loader = DataLoader(
         dataset,
@@ -56,7 +73,10 @@ def evaluate_student_selector(
     )
     summary = {
         "checkpoint_path": str(checkpoint_path),
+        "split": split,
         "dataset_size": len(dataset),
+        "token_shard_dir": str(token_shard_dir),
+        "importance_shard_dir": str(importance_shard_dir),
         "device": str(device),
         **metrics,
     }
@@ -72,12 +92,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/train_student_selector_structured_toy.yaml")
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--split", default="test", choices=("train", "test"))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    summary = evaluate_student_selector(load_yaml(args.config), args.checkpoint)
+    summary = evaluate_student_selector(load_yaml(args.config), args.checkpoint, split=args.split)
     print("STUDENT_SELECTOR_EVAL_SUMMARY_JSON")
     print(json.dumps(summary, indent=2))
 

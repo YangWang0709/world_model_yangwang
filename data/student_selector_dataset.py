@@ -59,6 +59,7 @@ class StudentSelectorDataset(Dataset):
         importance_shard_glob: str = "importance_shard_*.pt",
         map_location: str = "cpu",
         require_key_token_mask: bool = True,
+        max_samples: int | None = None,
     ) -> None:
         self.token_paths = _resolve_paths(token_shard_dir, token_shard_glob)
         self.importance_paths = _resolve_paths(importance_shard_dir, importance_shard_glob)
@@ -126,12 +127,17 @@ class StudentSelectorDataset(Dataset):
                     }
                 )
                 paired_sample_ids.append(sample_id)
+                if max_samples is not None and len(self.samples) >= int(max_samples):
+                    break
+            if max_samples is not None and len(self.samples) >= int(max_samples):
+                break
 
         if len(paired_sample_ids) != len(set(paired_sample_ids)):
             raise ValueError("Duplicate paired sample_id found in importance shards")
-        missing_importance = sorted(set(token_index).difference(paired_sample_ids))
-        if missing_importance:
-            raise KeyError(f"Token samples missing importance labels: {missing_importance[:5]}")
+        if max_samples is None:
+            missing_importance = sorted(set(token_index).difference(paired_sample_ids))
+            if missing_importance:
+                raise KeyError(f"Token samples missing importance labels: {missing_importance[:5]}")
         if not self.samples:
             raise ValueError("No paired Student selector samples were loaded")
 

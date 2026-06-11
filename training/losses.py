@@ -142,6 +142,7 @@ def importance_topk_metrics(
     pred_scores: torch.Tensor,
     target_scores: torch.Tensor,
     k: int,
+    random_seed: int = 0,
 ) -> dict[str, float]:
     """Evaluate selector scores against teacher importance labels without key-token masks."""
 
@@ -160,14 +161,22 @@ def importance_topk_metrics(
     target_top1 = torch.topk(target, k=1, dim=1).indices.squeeze(1)
     pred_topk = torch.topk(pred, k=k, dim=1).indices
     target_topk = torch.topk(target, k=k, dim=1).indices
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(random_seed))
 
     topk_overlaps = []
     selected_values = []
-    for row, pred_indices, target_indices in zip(target, pred_topk, target_topk):
+    random_values = []
+    for row, pred_indices, target_indices in zip(target.cpu(), pred_topk.cpu(), target_topk.cpu()):
         pred_set = set(int(index) for index in pred_indices.tolist())
         target_set = set(int(index) for index in target_indices.tolist())
         topk_overlaps.append(len(pred_set.intersection(target_set)) / float(k))
         selected_values.append(row[pred_indices].mean())
+        random_indices = torch.randperm(row.numel(), generator=generator)[:k]
+        random_values.append(row[random_indices].mean())
+
+    selected_mean = float(torch.stack(selected_values).mean().item()) if selected_values else 0.0
+    random_mean = float(torch.stack(random_values).mean().item()) if random_values else 0.0
 
     return {
         "importance_mse": float(F.mse_loss(pred, target).item()),
@@ -175,8 +184,9 @@ def importance_topk_metrics(
         "pearson_corr_mean": float(pearson_corr_mean(pred, target).item()),
         "target_top1_overlap": float((pred_top1 == target_top1).float().mean().item()),
         "target_topk_overlap": float(sum(topk_overlaps) / len(topk_overlaps)) if topk_overlaps else 0.0,
-        "selected_teacher_importance_mean": float(torch.stack(selected_values).mean().item()) if selected_values else 0.0,
-        "random_teacher_importance_mean": float(target.mean().item()),
+        "selected_teacher_importance_mean": selected_mean,
+        "random_teacher_importance_mean": random_mean,
+        "selected_vs_random_importance_gap": selected_mean - random_mean,
         "score_mean": float(pred.mean().item()),
         "score_std": float(pred.std(unbiased=False).item()) if pred.numel() > 1 else 0.0,
         "score_min": float(pred.min().item()),

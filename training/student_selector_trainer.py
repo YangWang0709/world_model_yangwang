@@ -62,15 +62,30 @@ def load_student_selector_checkpoint(
     return checkpoint
 
 
-def _dataset_from_config(config: dict[str, Any]) -> StudentSelectorDataset:
+def _dataset_from_config(config: dict[str, Any], split: str = "train") -> StudentSelectorDataset:
     data_cfg = config["data"]
+    if split == "train":
+        token_shard_dir = data_cfg.get("train_token_shard_dir", data_cfg.get("token_shard_dir"))
+        importance_shard_dir = data_cfg.get("train_importance_shard_dir", data_cfg.get("importance_shard_dir"))
+        max_samples = data_cfg.get("max_train_samples", data_cfg.get("max_samples"))
+    elif split == "test":
+        token_shard_dir = data_cfg.get("test_token_shard_dir", data_cfg.get("token_shard_dir"))
+        importance_shard_dir = data_cfg.get("test_importance_shard_dir", data_cfg.get("importance_shard_dir"))
+        max_samples = data_cfg.get("max_test_samples", data_cfg.get("max_samples"))
+    else:
+        raise ValueError(f"Unsupported selector dataset split: {split!r}")
+    if token_shard_dir is None:
+        raise KeyError(f"data.{split}_token_shard_dir or data.token_shard_dir is required")
+    if importance_shard_dir is None:
+        raise KeyError(f"data.{split}_importance_shard_dir or data.importance_shard_dir is required")
     return StudentSelectorDataset(
-        token_shard_dir=data_cfg["token_shard_dir"],
-        importance_shard_dir=data_cfg["importance_shard_dir"],
+        token_shard_dir=token_shard_dir,
+        importance_shard_dir=importance_shard_dir,
         token_shard_glob=data_cfg.get("token_shard_glob", "tokens_shard_*.pt"),
         importance_shard_glob=data_cfg.get("importance_shard_glob", "importance_shard_*.pt"),
         require_key_token_mask=bool(data_cfg.get("require_key_token_mask", True)),
         map_location="cpu",
+        max_samples=int(max_samples) if max_samples is not None else None,
     )
 
 
@@ -98,6 +113,7 @@ def evaluate_selector_on_loader(
     metrics = importance_topk_metrics(scores, targets, k=topk)
     metrics["num_samples"] = int(scores.shape[0])
     metrics["num_tokens"] = int(scores.shape[1])
+    metrics["topk"] = int(topk)
     if all_masks:
         masks = torch.cat(all_masks, dim=0)
         metrics.update(topk_coverage_metrics(scores, masks, k=topk))
@@ -135,7 +151,12 @@ class StudentSelectorTrainer:
         self.save_checkpoints = bool(output_cfg.get("save_checkpoint", True))
         self.save_metrics = bool(output_cfg.get("save_metrics", True))
 
-        self.dataset = _dataset_from_config(config)
+        self.dataset = _dataset_from_config(config, split="train")
+        has_test_split = (
+            config["data"].get("test_token_shard_dir") is not None
+            or config["data"].get("test_importance_shard_dir") is not None
+        )
+        self.eval_dataset = _dataset_from_config(config, split="test") if has_test_split else self.dataset
         self.loader = DataLoader(
             self.dataset,
             batch_size=int(train_cfg.get("batch_size", 8)),
@@ -145,7 +166,7 @@ class StudentSelectorTrainer:
             drop_last=False,
         )
         self.eval_loader = DataLoader(
-            self.dataset,
+            self.eval_dataset,
             batch_size=int(train_cfg.get("batch_size", 8)),
             shuffle=False,
             num_workers=0,
@@ -251,6 +272,15 @@ class StudentSelectorTrainer:
                     break
 
         losses = [metric["loss"] for metric in metrics]
+        train_eval_loader = DataLoader(
+            self.dataset,
+            batch_size=int(self.config["training"].get("batch_size", 8)),
+            shuffle=False,
+            num_workers=0,
+            collate_fn=student_selector_collate_fn,
+            drop_last=False,
+        )
+        train_eval_metrics = evaluate_selector_on_loader(self.model, train_eval_loader, self.device, self.topk)
         eval_metrics = evaluate_selector_on_loader(self.model, self.eval_loader, self.device, self.topk)
         summary = {
             "num_steps": len(metrics),
@@ -258,21 +288,45 @@ class StudentSelectorTrainer:
             "final_loss": losses[-1],
             "best_loss": min(losses),
             "loss_decreased": bool(losses[-1] < losses[0]),
+            "final_train_importance_mse": train_eval_metrics["importance_mse"],
+            "final_train_importance_mae": train_eval_metrics["importance_mae"],
+            "final_train_pearson_corr_mean": train_eval_metrics["pearson_corr_mean"],
+            "final_train_target_top1_overlap": train_eval_metrics["target_top1_overlap"],
+            "final_train_target_topk_overlap": train_eval_metrics["target_topk_overlap"],
+            "final_train_selected_teacher_importance_mean": train_eval_metrics["selected_teacher_importance_mean"],
+            "final_train_random_teacher_importance_mean": train_eval_metrics["random_teacher_importance_mean"],
+            "final_train_selected_vs_random_importance_gap": train_eval_metrics["selected_vs_random_importance_gap"],
+            "test_importance_mse": eval_metrics["importance_mse"],
+            "test_importance_mae": eval_metrics["importance_mae"],
+            "test_pearson_corr_mean": eval_metrics["pearson_corr_mean"],
+            "test_target_top1_overlap": eval_metrics["target_top1_overlap"],
+            "test_target_topk_overlap": eval_metrics["target_topk_overlap"],
+            "test_selected_teacher_importance_mean": eval_metrics["selected_teacher_importance_mean"],
+            "test_random_teacher_importance_mean": eval_metrics["random_teacher_importance_mean"],
+            "test_selected_vs_random_importance_gap": eval_metrics["selected_vs_random_importance_gap"],
             "final_importance_mse": eval_metrics["importance_mse"],
             "final_importance_mae": eval_metrics["importance_mae"],
             "final_pearson_corr_mean": eval_metrics["pearson_corr_mean"],
             "final_target_top1_overlap": eval_metrics["target_top1_overlap"],
             "final_target_topk_overlap": eval_metrics["target_topk_overlap"],
             "final_selected_teacher_importance_mean": eval_metrics["selected_teacher_importance_mean"],
+            "final_random_teacher_importance_mean": eval_metrics["random_teacher_importance_mean"],
+            "final_selected_vs_random_importance_gap": eval_metrics["selected_vs_random_importance_gap"],
             "checkpoint_path": "",
             "metrics_path": str(self.metrics_path),
             "summary_path": str(self.summary_path),
             "device": str(self.device),
             "dataset_size": len(self.dataset),
+            "train_dataset_size": len(self.dataset),
+            "test_dataset_size": len(self.eval_dataset),
             "num_samples": eval_metrics["num_samples"],
+            "train_num_samples": train_eval_metrics["num_samples"],
+            "test_num_samples": eval_metrics["num_samples"],
             "num_tokens": eval_metrics["num_tokens"],
             "run_dir": str(self.run_dir),
             "topk": int(self.topk),
+            "train_eval_metrics": train_eval_metrics,
+            "test_eval_metrics": eval_metrics,
         }
         if "key_score_mean" in eval_metrics:
             summary.update(
