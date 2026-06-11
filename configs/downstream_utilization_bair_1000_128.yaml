@@ -1,0 +1,153 @@
+stage: downstream_utilization_bair_1000_128
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+data:
+  train_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_1000_128/train
+  test_token_shard_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/bair_videomae_1000_128/test
+  train_importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_1000_128/train
+  test_importance_shard_dir: /home/ubuntu22/tgpawb_world_model/data/importance_shards/bair_videomae_teacher_1000_128/test
+  token_shard_glob: tokens_shard_*.pt
+  importance_shard_glob: importance_shard_*.pt
+  max_train_samples: 1000
+  max_test_samples: 128
+  require_key_token_mask: false
+
+teacher_reference:
+  checkpoint: /home/ubuntu22/tgpawb_world_model/runs/teacher_bair_videomae_1000_128_v1/checkpoints/teacher_world_model_step_001200.pt
+  token_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 2
+  dropout: 0.0
+  pool: mean
+
+learned_selectors:
+  root: /home/ubuntu22/tgpawb_world_model/runs/student_selector_bair_videomae_1000_128_weighted_mse_multiseed_v1
+  seeds: [0, 1, 2]
+  checkpoint_pattern: weighted_mse_alpha2_seed{seed}/checkpoints/student_selector_step_001000.pt
+  token_dim: 768
+  hidden_dim: 256
+  dropout: 0.0
+  use_task: false
+  freeze: true
+
+selection:
+  topk: 16
+  num_tokens: 392
+  token_retention_ratio: 0.04081632653061224
+
+phase_a:
+  name: quick_single_seed_scan
+  seeds: [0]
+  max_steps: 800
+  batch_size: 4
+  num_workers: 0
+  variants:
+    - name: current_perceiver_like
+      selection_policy: learned_top16
+      utilization_module: perceiver_like
+      topk: 16
+
+    - name: mean_pool_selected
+      selection_policy: learned_top16
+      utilization_module: mean_pool
+      topk: 16
+
+    - name: attention_pool_selected
+      selection_policy: learned_top16
+      utilization_module: attention_pool
+      topk: 16
+
+    - name: selector_score_weighted_pool
+      selection_policy: learned_top16
+      utilization_module: selector_score_weighted_pool
+      topk: 16
+
+    - name: transformer_encoder_selected
+      selection_policy: learned_top16
+      utilization_module: transformer_encoder
+      topk: 16
+      transformer_layers: 2
+      transformer_heads: 8
+
+    - name: cross_attention_latent_bottleneck
+      selection_policy: learned_top16
+      utilization_module: cross_attention_latent_bottleneck
+      topk: 16
+      num_latents: 16
+      latent_dim: 512
+      cross_attention_layers: 2
+      num_heads: 8
+
+    - name: hybrid_learned8_uniform8_perceiver
+      selection_policy: hybrid_learned8_uniform8
+      utilization_module: perceiver_like
+      topk: 16
+      learned_k: 8
+      uniform_k: 8
+
+    - name: hybrid_learned8_uniform8_cross_attention
+      selection_policy: hybrid_learned8_uniform8
+      utilization_module: cross_attention_latent_bottleneck
+      topk: 16
+      learned_k: 8
+      uniform_k: 8
+      num_latents: 16
+      latent_dim: 512
+      cross_attention_layers: 2
+      num_heads: 8
+
+phase_b:
+  name: top_variant_multiseed
+  enabled: true
+  seeds: [0, 1, 2]
+  max_steps: 1200
+  batch_size: 4
+  num_workers: 0
+  select_top_n_from_phase_a: 2
+  selection_metric: student_future_mse
+  lower_is_better: true
+
+student_world_model:
+  output_dim: 768
+  latent_dim: 512
+  hidden_dim: 512
+  num_layers: 2
+  dropout: 0.0
+  pool: mean
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+  future_loss_weight: 1.0
+
+compressor:
+  token_dim: 768
+  latent_dim: 512
+  hidden_dim: 512
+  num_latents: 16
+  dropout: 0.0
+  compressor_type: perceiver_like
+  num_heads: 8
+
+step15_reference:
+  validation_summary: /home/ubuntu22/tgpawb_world_model/runs/bair_1000_128_multiseed_validation_v1/multiseed_validation_summary.json
+  baseline_summary: /home/ubuntu22/tgpawb_world_model/runs/baseline_comparison_bair_videomae_1000_128_multiseed_v1/baseline_summary.json
+  baseline_aggregate: /home/ubuntu22/tgpawb_world_model/runs/baseline_comparison_bair_videomae_1000_128_multiseed_v1/baseline_multiseed_aggregate.json
+  learned_mse_mean: 1.57323252
+  random_mse_mean: 1.57845018
+  uniform_mse: 1.56802237
+  teacher_importance_topk_mse: 1.52461295
+  learned_selected_importance_mean: 0.54776923
+
+resource_limits:
+  min_free_disk_gb: 100
+  max_ram_gb_warning: 28
+  max_gpu_mem_fraction_warning: 0.9
+  cloud_recommendation_on_oom: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: downstream_utilization_bair_1000_128_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/downstream_utilization_bair_1000_128_v1/downstream_utilization_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/downstream_utilization_bair_1000_128_v1/downstream_utilization_summary.md
