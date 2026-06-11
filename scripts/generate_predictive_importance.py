@@ -72,8 +72,14 @@ def _with_cli_overrides(config: dict[str, Any], args: argparse.Namespace) -> dic
     if args.teacher_checkpoint:
         updated["teacher"]["checkpoint"] = args.teacher_checkpoint
     if args.output_dir:
-        updated["output"]["output_dir"] = args.output_dir
-        updated["output"]["summary_path"] = str(Path(args.output_dir) / "importance_summary.json")
+        if "train_token_shard_dir" in updated["data"] and "test_token_shard_dir" in updated["data"]:
+            updated["output"]["output_root"] = args.output_dir
+            updated["output"]["train_output_dir"] = str(Path(args.output_dir) / "train")
+            updated["output"]["test_output_dir"] = str(Path(args.output_dir) / "test")
+            updated["output"]["summary_path"] = str(Path(args.output_dir) / "importance_summary.json")
+        else:
+            updated["output"]["output_dir"] = args.output_dir
+            updated["output"]["summary_path"] = str(Path(args.output_dir) / "importance_summary.json")
     if args.device:
         updated["importance"]["device"] = args.device
     if args.max_shards is not None:
@@ -234,29 +240,37 @@ def _select_sample_range(shard: dict[str, Any], start: int, end: int) -> dict[st
     return selected
 
 
-def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
-    """Generate importance shards from token shards and a tiny teacher checkpoint."""
+def _generate_predictive_importance_single(
+    config: dict[str, Any],
+    data_cfg_override: dict[str, Any] | None = None,
+    output_cfg_override: dict[str, Any] | None = None,
+    teacher_bundle: tuple[TeacherWorldModel, dict[str, Any], Path, torch.device] | None = None,
+) -> dict[str, Any]:
+    """Generate importance shards for one token-shard directory."""
 
     start_time = time.perf_counter()
 
-    data_cfg = config["data"]
+    data_cfg = data_cfg_override or config["data"]
     teacher_cfg = config["teacher"]
     importance_cfg = config["importance"]
-    output_cfg = config["output"]
+    output_cfg = output_cfg_override or config["output"]
 
     output_dir = Path(output_cfg["output_dir"])
     if output_dir.exists() and bool(output_cfg.get("overwrite", False)):
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    device = resolve_device(str(importance_cfg.get("device", "cuda_if_available")))
-    teacher_checkpoint = resolve_teacher_checkpoint(teacher_cfg["checkpoint"])
-    teacher_model, teacher_model_config = _load_teacher(
-        teacher_checkpoint,
-        config_override=teacher_cfg.get("config"),
-    )
-    teacher_model.to(device)
-    teacher_model.eval()
+    if teacher_bundle is None:
+        device = resolve_device(str(importance_cfg.get("device", "cuda_if_available")))
+        teacher_checkpoint = resolve_teacher_checkpoint(teacher_cfg["checkpoint"])
+        teacher_model, teacher_model_config = _load_teacher(
+            teacher_checkpoint,
+            config_override=teacher_cfg.get("config"),
+        )
+        teacher_model.to(device)
+        teacher_model.eval()
+    else:
+        teacher_model, teacher_model_config, teacher_checkpoint, device = teacher_bundle
 
     shard_paths = _resolve_shard_paths(data_cfg)
     split = str(data_cfg.get("split", "unknown"))
@@ -278,6 +292,9 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
     total_samples = 0
     observed_num_tokens: int | None = None
     observed_token_dim: int | None = None
+    source_encoder = "unknown"
+    source_dataset = "unknown"
+    source_split = split
     print(f"teacher checkpoint: {teacher_checkpoint}")
     print(f"source token shard dir: {data_cfg['token_shard_dir']}")
     print(f"output dir: {output_dir}")
@@ -287,6 +304,13 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
     try:
         for source_shard_index, shard_path in enumerate(shard_paths):
             raw_shard = load_token_shard(shard_path, map_location="cpu")
+            if source_shard_index == 0:
+                source_encoder = str(raw_shard.get("encoder_name", "unknown"))
+                source_split = str(raw_shard.get("split", split))
+                metadata = raw_shard.get("metadata") or []
+                first_metadata = metadata[0] if metadata else {}
+                if isinstance(first_metadata, dict):
+                    source_dataset = str(first_metadata.get("source", first_metadata.get("dataset", "unknown")))
             shard_batch = int(raw_shard["past_tokens"].shape[0])
             remaining = None if max_samples is None else int(max_samples) - total_samples
             if remaining is not None and remaining <= 0:
@@ -373,6 +397,10 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
         "teacher_checkpoint": str(teacher_checkpoint),
         "source_token_shard_dir": str(data_cfg["token_shard_dir"]),
         "output_dir": str(output_dir),
+        "split": split,
+        "source_encoder": source_encoder,
+        "source_split": source_split,
+        "dataset": source_dataset,
         "device": str(device),
         "num_source_shards": len(shard_paths),
         "num_importance_shards": len(output_paths),
@@ -404,6 +432,142 @@ def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
             f"{first['importance_mean']} / {first['importance_std']} / "
             f"{first['importance_min']} / {first['importance_max']}"
         )
+    print(f"IMPORTANCE_SUMMARY_WRITTEN = {summary_path}")
+    return summary
+
+
+def _has_train_test_split_dirs(config: dict[str, Any]) -> bool:
+    data_cfg = config.get("data", {})
+    return "train_token_shard_dir" in data_cfg and "test_token_shard_dir" in data_cfg
+
+
+def _combine_split_generation_summaries(
+    config: dict[str, Any],
+    train_summary: dict[str, Any],
+    test_summary: dict[str, Any],
+    output_root: Path,
+    summary_path: Path,
+    elapsed_time_sec: float,
+) -> dict[str, Any]:
+    importance_cfg = config["importance"]
+    data_cfg = config["data"]
+    output_cfg = config["output"]
+    split_summaries = {"train": train_summary, "test": test_summary}
+    total_samples = int(train_summary["num_samples"]) + int(test_summary["num_samples"])
+    total_shards = int(train_summary["num_importance_shards"]) + int(test_summary["num_importance_shards"])
+    shard_means: list[float] = []
+    for split_summary in split_summaries.values():
+        shard_means.extend(float(item["importance_mean"]) for item in split_summary.get("shards", []))
+
+    summary = {
+        "schema_version": IMPORTANCE_SHARD_SCHEMA_VERSION,
+        "importance_method": str(importance_cfg.get("method", "teacher_token_occlusion")),
+        "teacher_checkpoint": str(train_summary["teacher_checkpoint"]),
+        "output_root": str(output_root),
+        "train_output_dir": str(output_cfg["train_output_dir"]),
+        "test_output_dir": str(output_cfg["test_output_dir"]),
+        "train_token_shard_dir": str(data_cfg["train_token_shard_dir"]),
+        "test_token_shard_dir": str(data_cfg["test_token_shard_dir"]),
+        "device": str(train_summary["device"]),
+        "num_importance_shards": total_shards,
+        "num_samples": total_samples,
+        "train_num_samples": int(train_summary["num_samples"]),
+        "test_num_samples": int(test_summary["num_samples"]),
+        "num_tokens": int(train_summary["num_tokens"]),
+        "token_dim": int(train_summary["token_dim"]),
+        "source_encoder": str(train_summary.get("source_encoder", "unknown")),
+        "dataset": str(train_summary.get("dataset", "unknown")),
+        "batch_size": int(importance_cfg.get("batch_size", 0) or 0),
+        "token_chunk_size": int(importance_cfg.get("token_chunk_size", 32)),
+        "max_train_samples": int(data_cfg["max_train_samples"]) if data_cfg.get("max_train_samples") is not None else None,
+        "max_test_samples": int(data_cfg["max_test_samples"]) if data_cfg.get("max_test_samples") is not None else None,
+        "mask_config": dict(train_summary["mask_config"]),
+        "split_summaries": split_summaries,
+        "importance_mean_across_shards": (
+            float(torch.tensor(shard_means, dtype=torch.float32).mean().item()) if shard_means else 0.0
+        ),
+        "elapsed_time_sec": elapsed_time_sec,
+        "oom": False,
+        "resource_limits": dict(config.get("resource_limits", {})),
+        "summary_path": str(summary_path),
+    }
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
+def generate_predictive_importance(config: dict[str, Any]) -> dict[str, Any]:
+    """Generate importance shards from token shards and a teacher checkpoint."""
+
+    if not _has_train_test_split_dirs(config):
+        return _generate_predictive_importance_single(config)
+
+    start_time = time.perf_counter()
+    data_cfg = dict(config["data"])
+    output_cfg = config["output"]
+    importance_cfg = config["importance"]
+    teacher_cfg = config["teacher"]
+    output_root = Path(output_cfg["output_root"])
+    if output_root.exists() and bool(output_cfg.get("overwrite", False)):
+        shutil.rmtree(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    device = resolve_device(str(importance_cfg.get("device", "cuda_if_available")))
+    teacher_checkpoint = resolve_teacher_checkpoint(teacher_cfg["checkpoint"])
+    teacher_model, teacher_model_config = _load_teacher(
+        teacher_checkpoint,
+        config_override=teacher_cfg.get("config"),
+    )
+    teacher_model.to(device)
+    teacher_model.eval()
+    teacher_bundle = (teacher_model, teacher_model_config, teacher_checkpoint, device)
+
+    train_data_cfg = dict(data_cfg)
+    train_data_cfg["token_shard_dir"] = data_cfg["train_token_shard_dir"]
+    train_data_cfg["split"] = str(data_cfg.get("split_train", "train"))
+    if data_cfg.get("max_train_samples") is not None:
+        train_data_cfg["max_samples"] = int(data_cfg["max_train_samples"])
+
+    test_data_cfg = dict(data_cfg)
+    test_data_cfg["token_shard_dir"] = data_cfg["test_token_shard_dir"]
+    test_data_cfg["split"] = str(data_cfg.get("split_test", "test"))
+    if data_cfg.get("max_test_samples") is not None:
+        test_data_cfg["max_samples"] = int(data_cfg["max_test_samples"])
+
+    train_output_cfg = dict(output_cfg)
+    train_output_cfg["output_dir"] = output_cfg["train_output_dir"]
+    train_output_cfg["summary_path"] = str(Path(output_cfg["train_output_dir"]) / "importance_summary.json")
+    train_output_cfg["overwrite"] = False
+
+    test_output_cfg = dict(output_cfg)
+    test_output_cfg["output_dir"] = output_cfg["test_output_dir"]
+    test_output_cfg["summary_path"] = str(Path(output_cfg["test_output_dir"]) / "importance_summary.json")
+    test_output_cfg["overwrite"] = False
+
+    train_summary = _generate_predictive_importance_single(
+        config,
+        data_cfg_override=train_data_cfg,
+        output_cfg_override=train_output_cfg,
+        teacher_bundle=teacher_bundle,
+    )
+    test_summary = _generate_predictive_importance_single(
+        config,
+        data_cfg_override=test_data_cfg,
+        output_cfg_override=test_output_cfg,
+        teacher_bundle=teacher_bundle,
+    )
+    elapsed_time_sec = round(time.perf_counter() - start_time, 3)
+    summary_path = Path(output_cfg.get("summary_path", output_root / "importance_summary.json"))
+    summary = _combine_split_generation_summaries(
+        config,
+        train_summary=train_summary,
+        test_summary=test_summary,
+        output_root=output_root,
+        summary_path=summary_path,
+        elapsed_time_sec=elapsed_time_sec,
+    )
+    print(f"number of train importance shards: {train_summary['num_importance_shards']}")
+    print(f"number of test importance shards: {test_summary['num_importance_shards']}")
     print(f"IMPORTANCE_SUMMARY_WRITTEN = {summary_path}")
     return summary
 

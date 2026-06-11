@@ -26,6 +26,7 @@ data/bair_robot_pushing_small_subset/
 *.mov
 *.mkv
 *.webm
+*.tfrecord
 *.pt
 *.pth
 *.ckpt
