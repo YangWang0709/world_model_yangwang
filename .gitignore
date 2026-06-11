@@ -10,6 +10,7 @@ outputs/
 checkpoints/
 model_cache/
 weights/
+hf_cache/
 data/raw/
 data/processed/
 data/toy_videos/

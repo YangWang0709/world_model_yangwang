@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,7 @@ def extract_tokens_from_config(
 ) -> dict[str, Any]:
     config_path = resolve_path(config_path)
     config = load_yaml(config_path)
+    start_time = time.perf_counter()
     dataset_cfg = config["dataset"]
     encoder_cfg = config["encoder"]
     extraction_cfg = config["extraction"]
@@ -182,8 +184,15 @@ def extract_tokens_from_config(
                 "actual_encoder": actual_encoder,
                 "used_fallback": used_fallback,
                 "fallback_reason": fallback_reason,
-                "num_tokens": int(fallback_cfg.get("dummy_num_tokens", encoder_cfg.get("num_tokens", 196))),
-                "token_dim": int(fallback_cfg.get("dummy_token_dim", encoder_cfg.get("token_dim", 768))),
+                "model_name_or_path": encoder_cfg.get("model_name_or_path"),
+                "cache_dir": encoder_cfg.get("cache_dir"),
+                "output_mode": encoder_cfg.get("output_mode"),
+                "image_size": encoder_cfg.get("image_size"),
+                "num_frames": encoder_cfg.get("num_frames"),
+                "token_dim": int(past_tokens.shape[-1]),
+                "num_tokens": int(past_tokens.shape[1]),
+                "dummy_num_tokens": int(fallback_cfg.get("dummy_num_tokens", encoder_cfg.get("num_tokens", 196))),
+                "dummy_token_dim": int(fallback_cfg.get("dummy_token_dim", encoder_cfg.get("token_dim", 768))),
                 "patch_grid_h": int(encoder_cfg.get("patch_grid_h", 14)),
                 "patch_grid_w": int(encoder_cfg.get("patch_grid_w", 14)),
                 "encoder_availability": encoder_availability,
@@ -232,16 +241,21 @@ def extract_tokens_from_config(
         "dataset_size": len(dataset),
         "batch_size": batch_size,
         "shard_size": shard_size,
+        "max_samples": effective_max_samples,
         "device": str(device),
         "encoder_name": actual_encoder,
         "requested_encoder": requested_encoder,
         "actual_encoder": actual_encoder,
         "used_fallback": used_fallback,
         "fallback_reason": fallback_reason,
+        "model_name_or_path": encoder_cfg.get("model_name_or_path"),
+        "cache_dir": encoder_cfg.get("cache_dir"),
         "encoder_availability": encoder_availability,
         "num_shards": len(shard_summaries),
         "output_dir": str(out_dir),
         "shards": shard_summaries,
+        "output_token_shape": shard_summaries[0]["past_tokens_shape"] if shard_summaries else None,
+        "elapsed_time_sec": round(time.perf_counter() - start_time, 3),
     }
     summary_path = out_dir / "extraction_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

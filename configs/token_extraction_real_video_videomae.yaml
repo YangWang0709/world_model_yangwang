@@ -1,0 +1,37 @@
+stage: token_extraction_real_video_videomae
+project_root: /home/ubuntu22/tgpawb_world_model
+
+dataset:
+  name: real_video_minimal
+  root: /home/ubuntu22/tgpawb_world_model/data/real_video_minimal
+  metadata_file: /home/ubuntu22/tgpawb_world_model/data/real_video_minimal/metadata.jsonl
+  split: real_minimal
+  past_len: 4
+  future_len: 4
+  image_size: 224
+  max_samples: 8
+
+encoder:
+  name: videomae
+  model_name_or_path: /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  cache_dir: /home/ubuntu22/tgpawb_world_model/model_cache/huggingface
+  allow_download: false
+  local_files_only: true
+  device: cuda_if_available
+  image_size: 224
+  num_frames: 8
+  output_mode: last_hidden_state
+  ignore_mismatched_sizes: true
+  source_policy: windows_local_then_transfer
+
+fallback:
+  allow_dummy_fallback: false
+
+extraction:
+  batch_size: 1
+  num_workers: 0
+  device: cuda_if_available
+  output_dir: /home/ubuntu22/tgpawb_world_model/data/token_shards/real_video_videomae_smoke
+  shard_size: 2
+  seed: 42
+  max_samples: 8
