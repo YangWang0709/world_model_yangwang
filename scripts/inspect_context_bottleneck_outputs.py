@@ -21,7 +21,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    summary = write_context_bottleneck_summaries(config=load_yaml(parse_args().config))
+    config = load_yaml(parse_args().config)
+    summary_path = Path(config["output"]["summary_json"])
+    if summary_path.exists():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    else:
+        summary = write_context_bottleneck_summaries(config=config)
     compact = {
         "pass": summary.get("sanity_gate_pass"),
         "current_only_mse": summary.get("current_only_mse"),
