@@ -12,29 +12,93 @@ from torch.utils.data import DataLoader
 from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
 from models.attention_selector import AttentionSelector, select_topk
 from models.student_world_model import StudentWorldModel
+from models.teacher_world_model import TeacherWorldModel
 from models.token_compressor import TokenCompressor
 from training.losses import future_latent_mse, importance_topk_metrics, topk_coverage_metrics
 from training.student_selector_trainer import load_student_selector_checkpoint, set_seed
-from training.teacher_trainer import grad_norm, resolve_device, target_from_future_tokens
+from training.teacher_trainer import grad_norm, load_checkpoint, resolve_device, target_from_future_tokens
 
 
-def _dataset_from_config(config: dict[str, Any]) -> StudentSelectorDataset:
+def _split_data_value(data_cfg: dict[str, Any], split: str, key: str, fallback_key: str) -> Any:
+    split_key = f"{split}_{key}"
+    if split_key in data_cfg:
+        return data_cfg[split_key]
+    if fallback_key in data_cfg:
+        return data_cfg[fallback_key]
+    raise KeyError(f"data.{split_key} or data.{fallback_key} is required")
+
+
+def build_student_world_model_dataset(config: dict[str, Any], split: str = "train") -> StudentSelectorDataset:
+    """Build a paired token/importance dataset for train or eval splits."""
+
+    if split not in {"train", "test"}:
+        raise ValueError(f"Unsupported split {split!r}; expected 'train' or 'test'")
     data_cfg = config["data"]
+    token_shard_dir = _split_data_value(data_cfg, split, "token_shard_dir", "token_shard_dir")
+    importance_shard_dir = _split_data_value(
+        data_cfg,
+        split,
+        "importance_shard_dir",
+        "importance_shard_dir",
+    )
+    max_samples = data_cfg.get(f"max_{split}_samples", data_cfg.get("max_samples"))
     dataset = StudentSelectorDataset(
-        token_shard_dir=data_cfg["token_shard_dir"],
-        importance_shard_dir=data_cfg["importance_shard_dir"],
+        token_shard_dir=token_shard_dir,
+        importance_shard_dir=importance_shard_dir,
         token_shard_glob=data_cfg.get("token_shard_glob", "tokens_shard_*.pt"),
         importance_shard_glob=data_cfg.get("importance_shard_glob", "importance_shard_*.pt"),
         require_key_token_mask=bool(data_cfg.get("require_key_token_mask", True)),
         map_location="cpu",
+        max_samples=int(max_samples) if max_samples is not None else None,
     )
-    max_samples = data_cfg.get("max_samples")
-    if max_samples is not None:
-        max_sample_count = int(max_samples)
-        if max_sample_count <= 0:
-            raise ValueError("data.max_samples must be positive when provided")
-        dataset.samples = dataset.samples[:max_sample_count]
     return dataset
+
+
+def _dataset_from_config(config: dict[str, Any]) -> StudentSelectorDataset:
+    return build_student_world_model_dataset(config, split="train")
+
+
+def summarize_student_world_model_dataset(
+    dataset: StudentSelectorDataset,
+    split: str,
+) -> dict[str, Any]:
+    """Return compact token/importance metadata for reports."""
+
+    first_sample = dataset[0]
+    past_tokens = first_sample["past_tokens"]
+    future_tokens = first_sample["future_tokens"]
+    metadata = first_sample.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    importance_metadata = metadata.get("importance_metadata", {})
+    if not isinstance(importance_metadata, dict):
+        importance_metadata = {}
+    source_encoder = str(
+        metadata.get(
+            "source_encoder",
+            metadata.get(
+                "encoder_name",
+                importance_metadata.get("source_encoder", importance_metadata.get("encoder_name", "unknown")),
+            ),
+        )
+    )
+    dataset_name = str(metadata.get("source", metadata.get("dataset", importance_metadata.get("dataset", "unknown"))))
+    return {
+        "split": split,
+        "dataset": dataset_name,
+        "num_samples": len(dataset),
+        "num_token_shards": len(dataset.token_paths),
+        "num_importance_shards": len(dataset.importance_paths),
+        "num_tokens": int(past_tokens.shape[0]),
+        "token_dim": int(past_tokens.shape[1]),
+        "past_token_shape": list(past_tokens.shape),
+        "future_token_shape": list(future_tokens.shape),
+        "source_encoder": source_encoder,
+        "token_shard_dir": str(Path(dataset.token_paths[0]).parent),
+        "importance_shard_dir": str(Path(dataset.importance_paths[0]).parent),
+        "first_token_shard_path": str(dataset.token_paths[0]),
+        "first_importance_shard_path": str(dataset.importance_paths[0]),
+    }
 
 
 def selected_key_metrics(
@@ -232,6 +296,34 @@ def evaluate_student_world_model_on_loader(
     }
 
 
+def evaluate_teacher_reference_on_loader(
+    teacher_checkpoint_path: str | Path,
+    loader: DataLoader,
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate a full-token Teacher checkpoint against mean-pooled future tokens."""
+
+    checkpoint = load_checkpoint(teacher_checkpoint_path, map_location="cpu")
+    teacher = TeacherWorldModel(**checkpoint["model_config"])
+    teacher.load_state_dict(checkpoint["model_state_dict"])
+    teacher.to(device)
+    teacher.eval()
+    squared_error_sum = 0.0
+    element_count = 0
+    with torch.no_grad():
+        for batch in loader:
+            past_tokens = batch["past_tokens"].to(device)
+            future_tokens = batch["future_tokens"].to(device)
+            target = target_from_future_tokens(future_tokens)
+            pred = teacher(past_tokens)
+            if pred.shape != target.shape:
+                raise ValueError(f"Teacher prediction shape {tuple(pred.shape)} != target shape {tuple(target.shape)}")
+            squared_error_sum += float((pred - target).pow(2).sum().item())
+            element_count += int(target.numel())
+    teacher_mse = squared_error_sum / float(max(element_count, 1))
+    return {"teacher_mse": teacher_mse, "teacher_future_mse": teacher_mse}
+
+
 def save_student_world_model_checkpoint(
     path: str | Path,
     selector: AttentionSelector,
@@ -311,6 +403,7 @@ class StudentWorldModelTrainer:
         self.use_sigmoid_scores = bool(selection_cfg.get("use_sigmoid_scores", train_cfg.get("use_sigmoid_scores", True)))
         self.selector_frozen = bool(selector_cfg.get("freeze", selector_cfg.get("frozen", True)))
         self.selector_checkpoint_path = str(selector_cfg["checkpoint"])
+        self.teacher_checkpoint_path = str(config.get("teacher_reference", {}).get("checkpoint", ""))
 
         self.run_dir = Path(output_cfg["run_root"]) / output_cfg["run_name"]
         self.checkpoint_dir = self.run_dir / "checkpoints"
@@ -319,7 +412,10 @@ class StudentWorldModelTrainer:
         self.save_checkpoints = bool(output_cfg.get("save_checkpoint", True))
         self.save_metrics = bool(output_cfg.get("save_metrics", True))
 
-        self.dataset = _dataset_from_config(config)
+        self.dataset = build_student_world_model_dataset(config, split="train")
+        self.eval_dataset = build_student_world_model_dataset(config, split="test")
+        self.train_dataset_summary = summarize_student_world_model_dataset(self.dataset, split="train")
+        self.eval_dataset_summary = summarize_student_world_model_dataset(self.eval_dataset, split="test")
         self.loader = DataLoader(
             self.dataset,
             batch_size=int(train_cfg.get("batch_size", 8)),
@@ -328,8 +424,16 @@ class StudentWorldModelTrainer:
             collate_fn=student_selector_collate_fn,
             drop_last=False,
         )
-        self.eval_loader = DataLoader(
+        self.train_eval_loader = DataLoader(
             self.dataset,
+            batch_size=int(train_cfg.get("batch_size", 8)),
+            shuffle=False,
+            num_workers=0,
+            collate_fn=student_selector_collate_fn,
+            drop_last=False,
+        )
+        self.eval_loader = DataLoader(
+            self.eval_dataset,
             batch_size=int(train_cfg.get("batch_size", 8)),
             shuffle=False,
             num_workers=0,
@@ -488,6 +592,15 @@ class StudentWorldModelTrainer:
                     break
 
         losses = [metric["loss"] for metric in metrics]
+        train_eval_metrics = evaluate_student_world_model_on_loader(
+            self.selector,
+            self.compressor,
+            self.student_world_model,
+            self.train_eval_loader,
+            device=self.device,
+            topk=self.topk,
+            use_sigmoid_scores=self.use_sigmoid_scores,
+        )
         eval_metrics = evaluate_student_world_model_on_loader(
             self.selector,
             self.compressor,
@@ -497,6 +610,22 @@ class StudentWorldModelTrainer:
             topk=self.topk,
             use_sigmoid_scores=self.use_sigmoid_scores,
         )
+        teacher_metrics: dict[str, float] = {}
+        if self.teacher_checkpoint_path:
+            teacher_metrics = evaluate_teacher_reference_on_loader(
+                self.teacher_checkpoint_path,
+                self.eval_loader,
+                device=self.device,
+            )
+        test_teacher_mse = teacher_metrics.get("teacher_mse")
+        test_student_teacher_gap = None
+        test_student_teacher_ratio = None
+        if test_teacher_mse is not None:
+            test_student_teacher_gap = float(eval_metrics["student_future_mse"]) - float(test_teacher_mse)
+            test_student_teacher_ratio = float(eval_metrics["student_future_mse"]) / max(float(test_teacher_mse), 1e-12)
+        num_tokens = int(self.dataset[0]["past_tokens"].shape[0])
+        token_dim = int(self.dataset[0]["past_tokens"].shape[1])
+        token_retention = float(self.topk) / float(num_tokens)
         summary = {
             "num_steps": len(metrics),
             "initial_loss": losses[0],
@@ -506,6 +635,22 @@ class StudentWorldModelTrainer:
             "final_future_loss": losses[-1],
             "student_future_mse": eval_metrics["student_future_mse"],
             "final_student_future_mse": eval_metrics["student_future_mse"],
+            "train_student_future_mse": train_eval_metrics["student_future_mse"],
+            "train_selector_target_top1_overlap": train_eval_metrics.get("selector_target_top1_overlap"),
+            "train_selector_target_topk_overlap": train_eval_metrics.get("selector_target_topk_overlap"),
+            "train_selected_teacher_importance_mean": train_eval_metrics.get("selected_teacher_importance_mean"),
+            "train_random_teacher_importance_mean": train_eval_metrics.get("random_teacher_importance_mean"),
+            "train_selected_vs_random_importance_gap": train_eval_metrics.get("selected_vs_random_importance_gap"),
+            "test_student_future_mse": eval_metrics["student_future_mse"],
+            "test_teacher_mse": test_teacher_mse,
+            "test_teacher_future_mse": test_teacher_mse,
+            "test_student_teacher_gap": test_student_teacher_gap,
+            "test_student_teacher_ratio": test_student_teacher_ratio,
+            "test_selector_target_top1_overlap": eval_metrics.get("selector_target_top1_overlap"),
+            "test_selector_target_topk_overlap": eval_metrics.get("selector_target_topk_overlap"),
+            "test_selected_teacher_importance_mean": eval_metrics.get("selected_teacher_importance_mean"),
+            "test_random_teacher_importance_mean": eval_metrics.get("random_teacher_importance_mean"),
+            "test_selected_vs_random_importance_gap": eval_metrics.get("selected_vs_random_importance_gap"),
             "final_selected_top1_hit_rate": eval_metrics.get("top1_hit_rate"),
             "final_selected_topk_hit_rate": eval_metrics.get("topk_hit_rate"),
             "final_selected_key_coverage": eval_metrics.get("selected_key_coverage"),
@@ -515,21 +660,32 @@ class StudentWorldModelTrainer:
             "final_selected_teacher_importance_mean": eval_metrics.get("selected_teacher_importance_mean"),
             "final_random_teacher_importance_mean": eval_metrics.get("random_teacher_importance_mean"),
             "final_selected_vs_random_importance_gap": eval_metrics.get("selected_vs_random_importance_gap"),
-            "token_retention_ratio": float(self.topk) / float(self.dataset[0]["past_tokens"].shape[0]),
+            "token_retention_ratio": token_retention,
             "checkpoint_path": "",
             "metrics_path": str(self.metrics_path),
             "summary_path": str(self.summary_path),
             "device": str(self.device),
             "dataset_size": len(self.dataset),
             "num_samples": len(self.dataset),
-            "num_tokens": int(self.dataset[0]["past_tokens"].shape[0]),
-            "token_dim": int(self.dataset[0]["past_tokens"].shape[1]),
+            "train_num_samples": len(self.dataset),
+            "test_num_samples": len(self.eval_dataset),
+            "num_tokens": num_tokens,
+            "token_dim": token_dim,
             "run_dir": str(self.run_dir),
             "selector_checkpoint_path": self.selector_checkpoint_path,
             "selector_checkpoint": self.selector_checkpoint_path,
             "selector_frozen": bool(self.selector_frozen),
+            "teacher_checkpoint_path": self.teacher_checkpoint_path or None,
             "topk": int(self.topk),
             "compressed_tokens": int(self.compressor_config["num_latents"]),
+            "train_dataset_summary": self.train_dataset_summary,
+            "test_dataset_summary": self.eval_dataset_summary,
+            "train_token_shard_dir": self.train_dataset_summary["token_shard_dir"],
+            "test_token_shard_dir": self.eval_dataset_summary["token_shard_dir"],
+            "train_importance_shard_dir": self.train_dataset_summary["importance_shard_dir"],
+            "test_importance_shard_dir": self.eval_dataset_summary["importance_shard_dir"],
+            "teacher_reference_eval": teacher_metrics,
+            "train_student_world_model_eval": train_eval_metrics,
             "student_world_model_eval": eval_metrics,
         }
 

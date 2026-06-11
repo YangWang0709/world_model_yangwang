@@ -15,10 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
+from data.student_selector_dataset import student_selector_collate_fn
 from eval.eval_efficiency import token_retention_ratio
 from models.teacher_world_model import TeacherWorldModel
 from training.student_world_model_trainer import (
+    build_student_world_model_dataset,
     build_student_world_model_bundle,
     selection_quality_metrics,
     student_world_model_forward,
@@ -54,6 +55,7 @@ def evaluate_teacher_student_gap(
     config: dict[str, Any],
     student_checkpoint_path: str | Path,
     teacher_checkpoint_path: str | Path | None = None,
+    split: str = "test",
 ) -> dict[str, Any]:
     train_cfg = config["training"]
     selection_cfg = config.get("selection", {})
@@ -69,14 +71,7 @@ def evaluate_teacher_student_gap(
         device,
     )
 
-    dataset = StudentSelectorDataset(
-        token_shard_dir=data_cfg["token_shard_dir"],
-        importance_shard_dir=data_cfg["importance_shard_dir"],
-        token_shard_glob=data_cfg.get("token_shard_glob", "tokens_shard_*.pt"),
-        importance_shard_glob=data_cfg.get("importance_shard_glob", "importance_shard_*.pt"),
-        require_key_token_mask=bool(data_cfg.get("require_key_token_mask", True)),
-        map_location="cpu",
-    )
+    dataset = build_student_world_model_dataset(config, split=split)
     loader = DataLoader(
         dataset,
         batch_size=int(train_cfg.get("batch_size", 8)),
@@ -133,9 +128,12 @@ def evaluate_teacher_student_gap(
     gap_metrics = compute_teacher_student_gap(teacher_mse, student_mse)
     retention = token_retention_ratio(selected_tokens=topk, total_tokens=int(score_tensor.shape[1]))
     summary = {
+        "dataset": str(data_cfg.get("dataset", dataset[0].get("metadata", {}).get("dataset", "unknown"))),
+        "split": split,
         "student_checkpoint_path": str(student_checkpoint_path),
         "teacher_checkpoint_path": resolved_teacher_checkpoint,
         "dataset_size": len(dataset),
+        "num_samples": len(dataset),
         "device": str(device),
         "teacher_future_mse": teacher_mse,
         "student_future_mse": student_mse,
@@ -144,6 +142,7 @@ def evaluate_teacher_student_gap(
         "token_retention_ratio": retention,
         "topk": topk,
         "total_tokens": int(score_tensor.shape[1]),
+        "num_tokens": int(score_tensor.shape[1]),
         "compressed_tokens": int(student_checkpoint["compressor_config"]["num_latents"]),
         **gap_metrics,
         **selection_metrics,
@@ -162,6 +161,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/train_student_world_model_structured_toy.yaml")
     parser.add_argument("--student-checkpoint", required=True)
     parser.add_argument("--teacher-checkpoint")
+    parser.add_argument("--split", default="test", choices=["train", "test"])
     return parser.parse_args()
 
 
@@ -171,6 +171,7 @@ def main() -> None:
         load_yaml(args.config),
         student_checkpoint_path=args.student_checkpoint,
         teacher_checkpoint_path=args.teacher_checkpoint,
+        split=args.split,
     )
     print("TEACHER_STUDENT_GAP_SUMMARY_JSON")
     print(json.dumps(summary, indent=2))

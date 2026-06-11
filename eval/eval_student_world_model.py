@@ -15,9 +15,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from data.student_selector_dataset import StudentSelectorDataset, student_selector_collate_fn
+from data.student_selector_dataset import student_selector_collate_fn
 from eval.eval_efficiency import token_retention_ratio
 from training.student_world_model_trainer import (
+    build_student_world_model_dataset,
     build_student_world_model_bundle,
     evaluate_student_world_model_on_loader,
 )
@@ -34,22 +35,15 @@ def future_mse_value(pred: torch.Tensor, target: torch.Tensor) -> float:
 def evaluate_student_world_model(
     config: dict[str, Any],
     checkpoint_path: str | Path,
+    split: str = "test",
 ) -> dict[str, Any]:
     train_cfg = config["training"]
     selection_cfg = config.get("selection", {})
-    data_cfg = config["data"]
     output_cfg = config["output"]
     device = resolve_device(str(train_cfg.get("device", "cuda_if_available")))
     selector, compressor, student_world_model, checkpoint = build_student_world_model_bundle(checkpoint_path, device)
 
-    dataset = StudentSelectorDataset(
-        token_shard_dir=data_cfg["token_shard_dir"],
-        importance_shard_dir=data_cfg["importance_shard_dir"],
-        token_shard_glob=data_cfg.get("token_shard_glob", "tokens_shard_*.pt"),
-        importance_shard_glob=data_cfg.get("importance_shard_glob", "importance_shard_*.pt"),
-        require_key_token_mask=bool(data_cfg.get("require_key_token_mask", True)),
-        map_location="cpu",
-    )
+    dataset = build_student_world_model_dataset(config, split=split)
     loader = DataLoader(
         dataset,
         batch_size=int(train_cfg.get("batch_size", 8)),
@@ -71,6 +65,7 @@ def evaluate_student_world_model(
         use_sigmoid_scores=use_sigmoid_scores,
     )
     summary = {
+        "split": split,
         "checkpoint_path": str(checkpoint_path),
         "selector_checkpoint_path": checkpoint["selector_checkpoint_path"],
         "selector_frozen": bool(checkpoint.get("selector_frozen", True)),
@@ -99,12 +94,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/train_student_world_model_structured_toy.yaml")
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--split", default="test", choices=["train", "test"])
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    summary = evaluate_student_world_model(load_yaml(args.config), args.checkpoint)
+    summary = evaluate_student_world_model(load_yaml(args.config), args.checkpoint, split=args.split)
     print("STUDENT_WORLD_MODEL_EVAL_SUMMARY_JSON")
     print(json.dumps(summary, indent=2))
 
