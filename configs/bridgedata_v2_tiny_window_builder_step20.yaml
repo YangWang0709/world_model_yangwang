@@ -1,0 +1,97 @@
+stage: bridgedata_v2_tiny_window_builder_step20
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+dataset:
+  name: BridgeData V2
+  role: first_long_context_migration_target
+  full_download_allowed: false
+  large_download_allowed: false
+  max_download_gb: 1.0
+  default_no_download: true
+
+  local_subset_candidates:
+    - /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tiny_user_subset
+    - /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tiny_subset
+    - /home/ubuntu22/tgpawb_world_model/datasets/bridgedata_v2_tiny_user_subset
+
+  manifest_candidates:
+    - /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tiny_user_subset/manifest.jsonl
+    - /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tiny_subset/manifest.jsonl
+
+  allow_missing_local_subset: true
+  use_fake_manifest_if_missing: true
+  fake_manifest:
+    num_trajectories: 3
+    num_frames: 40
+
+window:
+  context_len: 16
+  current_len: 4
+  future_len: 4
+  stride: 1
+  frame_rate_subsample: 1
+  min_trajectory_len: 24
+  image_size: 224
+
+output_records:
+  output_root: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1
+  window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1/bridgedata_v2_window_manifest.jsonl
+  trajectory_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1/trajectory_summary.json
+  builder_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1/bridgedata_v2_window_builder_summary.json
+  builder_summary_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1/bridgedata_v2_window_builder_summary.md
+
+metadata_policy:
+  save_action_as_metadata: true
+  use_action_as_input: false
+  save_language_instruction_as_metadata: true
+  use_language_as_input: false
+  save_goal_image_as_metadata: true
+  use_goal_image_as_input: false
+  save_camera_names_as_metadata: true
+
+supported_input_formats:
+  - manifest_jsonl
+  - directory_per_trajectory
+  - placeholder_fake_manifest
+
+manifest_jsonl_schema:
+  required_fields:
+    - trajectory_id
+    - num_frames
+  optional_fields:
+    - dataset_name
+    - split
+    - frame_paths
+    - image_dir
+    - camera_names
+    - actions_path
+    - actions
+    - language_instruction
+    - goal_image_path
+    - task_id
+    - environment_id
+    - metadata
+
+guards:
+  no_training: true
+  no_model_download: true
+  no_dataset_download: true
+  no_full_dataset_download: true
+  no_token_extraction: true
+  no_importance_generation: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  no_step17_rerun: true
+  no_step18_rerun: true
+
+resource_limits:
+  min_free_disk_gb: 120
+  max_download_gb: 1.0
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tiny_window_builder_step20_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1/bridgedata_v2_window_builder_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tiny_window_builder_step20_v1/bridgedata_v2_window_builder_summary.md

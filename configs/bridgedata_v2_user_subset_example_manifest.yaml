@@ -1,0 +1,23 @@
+dataset_name: BridgeData V2
+format: manifest_jsonl
+path: data/bridgedata_v2_tiny_user_subset/manifest.jsonl
+do_not_commit_subset_dir: true
+example_record:
+  dataset_name: BridgeData V2
+  split: train
+  trajectory_id: bridge_traj_000001
+  num_frames: 64
+  frame_paths:
+    - traj_000001/images/frame_000000.jpg
+    - traj_000001/images/frame_000001.jpg
+  image_dir: traj_000001/images
+  camera_names:
+    - main
+  actions_path: traj_000001/actions.npy
+  actions: null
+  language_instruction: put the object in the bowl
+  goal_image_path: traj_000001/goal.jpg
+  task_id: put_object_in_bowl
+  environment_id: kitchen_01
+  metadata:
+    source: user_provided_tiny_subset
