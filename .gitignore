@@ -30,11 +30,13 @@ data/bridgedata_v2/
 data/bridge_data_v2/
 data/bridgedata_v2_tiny_subset/
 data/bridgedata_v2_tiny_user_subset/
+data/bridgedata_v2_user_subset/
 data/bridgedata_v2_real_tiny_downloads/
 data/bridgedata_v2_real_tiny_subset/
 data/bridgedata_v2_real_tiny_extracted/
 datasets/bridgedata_v2/
 datasets/bridge_data_v2/
+datasets/bridgedata_v2_tiny_user_subset/
 datasets/bridgedata_v2_real_tiny/
 *.zip
 *.tar

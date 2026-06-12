@@ -1,0 +1,78 @@
+stage: bridgedata_v2_user_subset_ingestion_step22
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+dataset:
+  name: BridgeData V2
+  subset_mode: user_provided
+  no_download: true
+  full_download_allowed: false
+  large_download_allowed: false
+
+  user_subset_root: /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tiny_user_subset
+  manifest_path: /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tiny_user_subset/manifest.jsonl
+
+  allow_missing_user_subset: true
+  pending_user_data_is_not_failure: true
+
+  recommended_min_trajectories: 1
+  recommended_trajectories: 5
+  max_trajectories_for_validation: 10
+  min_frames_per_trajectory: 24
+  recommended_frames_per_trajectory: 40
+  max_images_to_check_exists: 100
+  max_images_to_open_optional: 20
+
+window:
+  context_len: 16
+  current_len: 4
+  future_len: 4
+  stride: 1
+  frame_rate_subsample: 1
+  min_trajectory_len: 24
+  image_size: 224
+
+metadata_policy:
+  save_action_as_metadata: true
+  use_action_as_input: false
+  save_language_instruction_as_metadata: true
+  use_language_as_input: false
+  save_goal_image_as_metadata: true
+  use_goal_image_as_input: false
+  save_camera_names_as_metadata: true
+
+template:
+  output_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/template
+  create_manifest_template: true
+  create_readme: true
+  create_example_metadata_json: true
+  create_no_image_placeholder_only: true
+
+guards:
+  no_download: true
+  no_training: true
+  no_model_download: true
+  no_token_extraction: true
+  no_importance_generation: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  no_step17_rerun: true
+  no_step18_rerun: true
+  no_step20_rerun_except_builder_reuse: true
+  no_step21_download_retry: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_user_subset_ingestion_step22_v1
+
+  subset_inspection_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_inspection.json
+  subset_inspection_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_inspection.md
+  generated_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_manifest.jsonl
+  manifest_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_manifest_summary.json
+  user_window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_window_manifest.jsonl
+  window_builder_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_window_builder_summary.json
+  validation_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_validation_summary.json
+  validation_summary_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_validation_summary.md
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_ingestion_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_user_subset_ingestion_step22_v1/user_subset_ingestion_eval.md
