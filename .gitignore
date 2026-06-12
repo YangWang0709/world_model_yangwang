@@ -34,10 +34,15 @@ data/bridgedata_v2_user_subset/
 data/bridgedata_v2_real_tiny_downloads/
 data/bridgedata_v2_real_tiny_subset/
 data/bridgedata_v2_real_tiny_extracted/
+data/bridgedata_v2_tfds_mini/
+data/bridgedata_v2_tfds_cache/
+data/bridgedata_v2_tfds_shards/
+data/bridgedata_v2_tfds_downloads/
 datasets/bridgedata_v2/
 datasets/bridge_data_v2/
 datasets/bridgedata_v2_tiny_user_subset/
 datasets/bridgedata_v2_real_tiny/
+datasets/bridgedata_v2_tfds_mini/
 *.zip
 *.tar
 *.tar.gz
@@ -55,6 +60,8 @@ datasets/bridgedata_v2_real_tiny/
 *.mkv
 *.webm
 *.tfrecord
+*.tfrecord-*
+*.jsonl.tmp
 *.pt
 *.pth
 *.ckpt

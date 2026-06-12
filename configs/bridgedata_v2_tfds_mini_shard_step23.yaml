@@ -1,0 +1,93 @@
+stage: bridgedata_v2_tfds_mini_shard_step23
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+dataset:
+  name: BridgeData V2
+  source_format: TFDS_RLDS
+  official_tfds_base_url: https://rail.eecs.berkeley.edu/datasets/bridge_release/data/tfds/bridge_dataset/1.0.0/
+  no_raw_zip: true
+  raw_zip_download_allowed: false
+  full_tfds_download_allowed: false
+  mini_shard_download_allowed: true
+
+  metadata_files:
+    - dataset_info.json
+    - features.json
+
+  optional_metadata_patterns:
+    - action_proprio_stats*.json
+    - action_proprio_stats*.txt
+
+download_policy:
+  max_download_gb: 1.0
+  max_download_bytes: 1073741824
+  require_content_length_before_download: true
+  delete_partial_if_exceeds_limit: true
+  max_tfds_train_shards: 5
+  preferred_tfds_train_shards: 1
+  shard_name_prefix: bridge_dataset-train
+  allow_metadata_download: true
+  allow_train_shard_download: true
+  allow_unknown_size_download: false
+
+paths:
+  tfds_env_python: /home/ubuntu22/miniconda3/envs/tgpawb_tfds_py311/bin/python
+  download_root: /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tfds_mini
+  tfds_dataset_root: /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tfds_mini/bridge_dataset/1.0.0
+
+window:
+  context_len: 16
+  current_len: 4
+  future_len: 4
+  stride: 1
+  frame_rate_subsample: 1
+  min_trajectory_len: 24
+  image_size: 224
+
+sample_limits:
+  max_episodes_to_scan: 50
+  max_valid_trajectories: 10
+  min_valid_trajectories: 1
+  max_windows: 500
+  max_images_to_materialize: 0
+  read_images_as_arrays: false
+  save_video_tensors: false
+
+metadata_policy:
+  save_action_as_metadata: true
+  use_action_as_input: false
+  save_language_instruction_as_metadata: true
+  use_language_as_input: false
+  save_goal_image_as_metadata: true
+  use_goal_image_as_input: false
+  save_camera_names_as_metadata: true
+
+guards:
+  no_raw_zip_download: true
+  no_full_tfds_download: true
+  no_training: true
+  no_model_download: true
+  no_token_extraction: true
+  no_importance_generation: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  no_step17_rerun: true
+  no_step18_rerun: true
+  no_step21_download_retry: true
+  keep_tensorflow_out_of_env_isaaclab: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tfds_mini_shard_step23_v1
+
+  inventory_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_inventory.json
+  download_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_download_summary.json
+  rlds_schema_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/rlds_schema_summary.json
+  tfds_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_manifest.jsonl
+  tfds_manifest_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_manifest_summary.json
+  tfds_window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_window_manifest.jsonl
+  tfds_window_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_window_summary.json
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_eval.md
