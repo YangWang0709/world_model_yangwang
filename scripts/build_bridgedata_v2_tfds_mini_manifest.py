@@ -31,6 +31,7 @@ def build_manifest_from_config(config_path: Path = DEFAULT_CONFIG) -> dict[str, 
             schema,
             min_frames=int(config["window"]["min_trajectory_len"]),
             max_valid_trajectories=int(config["sample_limits"]["max_valid_trajectories"]),
+            field_policy=config.get("field_policy"),
         )
     summary = write_manifest_and_summary(
         records,

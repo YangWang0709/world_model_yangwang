@@ -1,0 +1,83 @@
+stage: bridgedata_v2_tfds_field_resolver_step23_5
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+input:
+  step23_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1
+  step23_schema_summary: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/rlds_schema_summary.json
+  step23_download_summary: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_mini_shard_step23_v1/tfds_mini_download_summary.json
+  reuse_existing_tfds_mini_shard: true
+  redownload_allowed: false
+
+field_policy:
+  image:
+    required_prefix: steps/observation/
+    include_patterns:
+      - steps/observation/image_
+    exclude_patterns:
+      - episode_metadata/has_image_
+      - episode_metadata/
+    preferred_order:
+      - steps/observation/image_0
+      - steps/observation/image_1
+      - steps/observation/image_2
+      - steps/observation/image_3
+
+  action:
+    preferred_order:
+      - steps/action
+    use_as_input: false
+
+  language:
+    preferred_order:
+      - steps/language_instruction
+      - steps/natural_language_instruction
+      - steps/language_embedding
+    prefer_text_over_embedding: true
+    use_as_input: false
+
+  goal:
+    preferred_order:
+      - steps/observation/goal_image
+      - steps/goal_image
+      - steps/goal
+    use_as_input: false
+
+window:
+  context_len: 16
+  current_len: 4
+  future_len: 4
+  stride: 1
+  frame_rate_subsample: 1
+  min_trajectory_len: 24
+
+sample_limits:
+  max_valid_trajectories: 10
+  min_valid_trajectories: 1
+  max_windows: 500
+
+guards:
+  no_download: true
+  no_new_tfds_shard_download: true
+  no_raw_zip_download: true
+  no_full_tfds_download: true
+  no_training: true
+  no_model_download: true
+  no_token_extraction: true
+  no_importance_generation: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  keep_tensorflow_out_of_env_isaaclab: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tfds_field_resolver_step23_5_v1
+
+  resolved_fields_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/resolved_fields.json
+  resolved_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/tfds_mini_manifest_resolved.jsonl
+  resolved_manifest_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/tfds_mini_manifest_resolved_summary.json
+  resolved_window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/tfds_mini_window_manifest_resolved.jsonl
+  resolved_window_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/tfds_mini_window_resolved_summary.json
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/field_resolver_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/field_resolver_eval.md

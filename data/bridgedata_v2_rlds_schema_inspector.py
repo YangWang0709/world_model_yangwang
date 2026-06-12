@@ -8,6 +8,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+from data.bridgedata_v2_rlds_field_resolver import resolve_rlds_fields
+
 
 def inspect_rlds_like_episodes(
     episodes: list[dict[str, Any]],
@@ -46,6 +48,13 @@ def inspect_rlds_like_episodes(
             }
         )
     lengths = [item["num_steps"] for item in summaries]
+    candidate_fields = {
+        "image_fields": sorted(image_fields),
+        "action_fields": sorted(action_fields),
+        "language_fields": sorted(language_fields),
+        "goal_fields": sorted(goal_fields),
+        "proprio_fields": sorted(proprio_fields),
+    }
     return {
         "stage": "bridgedata_v2_rlds_schema_inspection",
         "tfds_env_ok": True,
@@ -54,13 +63,9 @@ def inspect_rlds_like_episodes(
         "episode_length_min": min(lengths) if lengths else None,
         "episode_length_mean": mean(lengths) if lengths else None,
         "episode_length_max": max(lengths) if lengths else None,
-        "candidate_fields": {
-            "image_fields": sorted(image_fields),
-            "action_fields": sorted(action_fields),
-            "language_fields": sorted(language_fields),
-            "goal_fields": sorted(goal_fields),
-            "proprio_fields": sorted(proprio_fields),
-        },
+        "candidate_fields": candidate_fields,
+        "field_groups": classify_rlds_field_groups(set().union(*(set(item["field_paths"]) for item in summaries)) if summaries else set()),
+        "resolved_fields": resolve_rlds_fields(candidate_fields),
         "episode_summaries": summaries,
         "can_build_16_4_4_windows": any(item["can_build_16_4_4_windows"] for item in summaries),
         "safe_stop": False,
@@ -118,6 +123,8 @@ def inspect_tfds_dataset_root(
             "episode_length_mean": mean(lengths) if lengths else None,
             "episode_length_max": max(lengths) if lengths else None,
             "candidate_fields": candidate_fields,
+            "field_groups": classify_rlds_field_groups(all_field_paths),
+            "resolved_fields": resolve_rlds_fields(candidate_fields),
             "episode_summaries": episode_summaries,
             "can_build_16_4_4_windows": any(item["can_build_16_4_4_windows"] for item in episode_summaries),
             "safe_stop": False,
@@ -152,6 +159,17 @@ def safe_stop_schema_summary(tfds_env_ok: bool, dataset_root_exists: bool, reaso
             "goal_fields": [],
             "proprio_fields": [],
         },
+        "field_groups": {
+            "image_tensor_fields": [],
+            "image_flag_fields": [],
+            "action_tensor_fields": [],
+            "language_text_fields": [],
+            "language_embedding_fields": [],
+            "goal_fields": [],
+        },
+        "resolved_fields": resolve_rlds_fields(
+            {"image_fields": [], "action_fields": [], "language_fields": [], "goal_fields": [], "proprio_fields": []}
+        ),
         "episode_summaries": [],
         "can_build_16_4_4_windows": False,
         "safe_stop": True,
@@ -224,6 +242,38 @@ def _candidate_fields_from_paths(paths: set[str]) -> dict[str, list[str]]:
         "language_fields": sorted(language_fields),
         "goal_fields": sorted(goal_fields),
         "proprio_fields": sorted(proprio_fields),
+    }
+
+
+def classify_rlds_field_groups(paths: set[str]) -> dict[str, list[str]]:
+    image_tensor_fields: set[str] = set()
+    image_flag_fields: set[str] = set()
+    action_tensor_fields: set[str] = set()
+    language_text_fields: set[str] = set()
+    language_embedding_fields: set[str] = set()
+    goal_fields: set[str] = set()
+    for key in paths:
+        lower = key.lower()
+        if "episode_metadata/has_image_" in lower:
+            image_flag_fields.add(key)
+        elif key.startswith("steps/observation/") and "image" in lower and "goal" not in lower:
+            image_tensor_fields.add(key)
+        if key == "steps/action" or lower.endswith("/action"):
+            action_tensor_fields.add(key)
+        if "language" in lower or "instruction" in lower:
+            if "embedding" in lower:
+                language_embedding_fields.add(key)
+            else:
+                language_text_fields.add(key)
+        if "goal" in lower:
+            goal_fields.add(key)
+    return {
+        "image_tensor_fields": sorted(image_tensor_fields),
+        "image_flag_fields": sorted(image_flag_fields),
+        "action_tensor_fields": sorted(action_tensor_fields),
+        "language_text_fields": sorted(language_text_fields),
+        "language_embedding_fields": sorted(language_embedding_fields),
+        "goal_fields": sorted(goal_fields),
     }
 
 
