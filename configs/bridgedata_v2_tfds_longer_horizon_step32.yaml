@@ -1,0 +1,258 @@
+stage: bridgedata_v2_tfds_longer_horizon_step32
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+input:
+  tfds_dataset_root: /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2_tfds_mini/bridge_dataset/1.0.0
+  tfds_env_python: /home/ubuntu22/miniconda3/envs/tgpawb_tfds_py311/bin/python
+  resolved_fields_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/resolved_fields.json
+  resolved_window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_field_resolver_step23_5_v1/tfds_mini_window_manifest_resolved.jsonl
+  local_videomae_model: /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  step31_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_teacher_temporal_horizon_diagnosis_step31_v1/step31_decision.json
+
+window:
+  context_len: 16
+  current_len: 4
+  future_len: 4
+  frame_stride: 1
+  horizon_gaps: [0, 4, 8, 12]
+  required_horizon_gaps: [0, 4, 8]
+  optional_horizon_gaps: [12]
+  image_field: steps/observation/image_0
+  action_field: steps/action
+  language_field: steps/language_instruction
+  goal_field: null
+  action_language_goal_as_metadata_only: true
+  expected_total_frames_by_gap:
+    gap0: 24
+    gap4: 28
+    gap8: 32
+    gap12: 36
+
+window_selection:
+  target_windows_per_horizon: 64
+  min_windows_per_horizon: 32
+  prefer_trajectory_diversity: true
+  max_windows_per_trajectory_soft_cap: 16
+  split_seeds: [42, 123, 999]
+  train_ratio: 0.75
+  val_ratio: 0.25
+  trajectory_disjoint_if_possible: true
+  deterministic_seed: 42
+
+sample_limits:
+  max_samples: 256
+  batch_size: 64
+  shuffle: false
+
+dry_run_limits:
+  max_windows: 256
+  max_trajectories: 32
+  max_total_frames: 9216
+  batch_size: 1
+  save_clip_cache: true
+  save_token_smoke_artifact: true
+  save_importance_artifacts: true
+  max_clip_cache_mb: 8192
+  max_token_artifact_mb: 8192
+  max_importance_artifact_mb: 1024
+  max_samples: 256
+
+resolved_fields:
+  image_field: steps/observation/image_0
+  action_field: steps/action
+  language_field: steps/language_instruction
+  goal_field: null
+
+clip_export:
+  enabled: true
+  limited_clip_export_only: true
+  image_size: 224
+  output_dtype: uint8
+  normalize_in_exporter: false
+  export_context: true
+  export_current: true
+  export_future: true
+  export_actions_metadata: true
+  export_language_metadata: true
+  use_action_as_input: false
+  use_language_as_input: false
+  use_goal_image_as_input: false
+
+token_extraction:
+  enabled: true
+  limited_token_extraction_only: true
+  perform_limited_token_extraction: true
+  no_model_download: true
+  local_files_only: true
+  image_field: steps/observation/image_0
+  image_size: 224
+  batch_size: 1
+  frame_repeat: 4
+  tokenize_each_frame_as_repeated_clip: true
+  note: "Step32 keeps frame-repeat VideoMAE tokens for comparability; true temporal token extraction is a later ablation."
+  expected_context_shape: [16, 392, 768]
+  expected_current_shape: [4, 392, 768]
+  expected_future_shape: [4, 392, 768]
+
+videomae:
+  use_existing_local_model_only: true
+  allow_model_download: false
+  local_files_only: true
+  model_name_or_path_candidates:
+    - /home/ubuntu22/tgpawb_world_model/model_cache/videomae-base-finetuned-kinetics-local
+  fallback_if_model_missing: safe_stop
+  freeze_model: true
+  eval_mode: true
+  output_mode: last_hidden_state
+  image_size: 224
+  frame_repeat: 4
+  tokenize_each_frame_as_repeated_clip: true
+  device: cuda_if_available
+
+proxy_importance:
+  enabled: true
+  limited_proxy_importance_generation_only: true
+  method: proxy_token_mse_dryrun
+  target: context_tokens_only
+  current_tokens_kept_full: true
+  train_current_importance: false
+  output_shape: [16, 392]
+
+importance:
+  perform_limited_proxy_importance: true
+  method: proxy_token_mse_dryrun
+  target: context_tokens_only
+  current_tokens_kept_full: true
+  train_current_importance: false
+  output_shape: [16, 392]
+  label_quality_note: proxy dry-run only; not final teacher label
+
+proxy_teacher:
+  enabled: true
+  name: deterministic_token_space_proxy
+  no_trainable_parameters: true
+  prediction_target: future_token_summary
+  base_prediction:
+    use_current_mean: true
+    use_context_mean: true
+    context_weight: 0.25
+    current_weight: 0.75
+
+targets:
+  target_variants:
+    - future_mean_all4
+    - future_last
+    - future_delta_last_minus_current
+    - future_delta_mean_minus_current
+  primary_target: future_delta_last_minus_current
+
+policies:
+  - name: current_only
+    use_context: false
+    topk: 0
+    train: true
+  - name: random_context_topk
+    use_context: true
+    selection: random
+    topk: 256
+    seed: 42
+    train: true
+  - name: proxy_importance_topk
+    use_context: true
+    selection: importance_topk
+    topk: 256
+    train: true
+  - name: full_context_reference
+    use_context: true
+    selection: full
+    topk: null
+    deployable: false
+    train: true
+
+context_bottleneck:
+  topk: 256
+  default_topk: 256
+  current_tokens_kept_full: true
+  train_current_importance: false
+  context_tokens_only: true
+
+tiny_trainval:
+  enabled: true
+  train_separate_model_per_policy: true
+  model_type: smoke_context_bottleneck_predictor
+  hidden_dim: 256
+  loss: mse_to_target_summary
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0
+  train_steps: 400
+  eval_every: 50
+  grad_clip_norm: 1.0
+  device: cuda_if_available
+  allow_cpu_fallback: true
+  save_checkpoint: false
+  save_state_dict: false
+  tiny_result_not_final_performance: true
+
+decision:
+  context_utility_claim_allowed: false
+  selector_training_allowed: false
+  current_importance_training_allowed: false
+  positive_signal_requires:
+    proxy_beats_current_fraction_min: 0.67
+    proxy_beats_random_fraction_min: 0.67
+    delta_target_gain_over_mean_target_min: 0.10
+  next_step_options:
+    - true_temporal_token_extraction_for_best_horizon
+    - longer_horizon_scale_to_more_windows_or_shard
+    - proxy_prior_teacher_for_delta_target
+    - selector_training_not_allowed_yet
+  require_clear_step33_recommendation: true
+
+guards:
+  no_new_data_download: true
+  no_new_tfds_shard_download: true
+  no_raw_zip_download: true
+  no_full_tfds_download: true
+  no_droid_download: true
+  no_model_download: true
+  allow_limited_clip_export_from_existing_shard: true
+  allow_limited_token_extraction_from_existing_shard: true
+  allow_limited_proxy_importance_generation: true
+  allow_tiny_diagnostic_predictor_training: true
+  no_videomae_training: true
+  no_context_teacher_large_training: true
+  no_selector_training: true
+  no_current_importance_training: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  no_large_token_shards: true
+  no_large_importance_shards: true
+  no_write_data_token_shards: true
+  no_write_data_importance_shards: true
+  keep_tensorflow_out_of_env_isaaclab: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tfds_longer_horizon_step32_v1
+  horizon_window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/horizon_window_manifest.jsonl
+  horizon_window_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/horizon_window_summary.json
+  horizon_split_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/horizon_splits.json
+  adapter_config_yaml: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/step32_adapter_config.yaml
+  clip_cache_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/clip_cache
+  clip_export_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/clip_export_summary.json
+  token_smoke_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/token_smoke
+  token_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/token_manifest.jsonl
+  token_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/token_summary.json
+  token_summary_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/token_summary.md
+  importance_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/importance_smoke
+  importance_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/importance_manifest.jsonl
+  importance_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/importance_summary.json
+  importance_summary_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/importance_summary.md
+  trainval_results_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/trainval_results.json
+  horizon_target_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/horizon_target_summary.json
+  step32_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/step32_decision.json
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/longer_horizon_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/longer_horizon_eval.md
