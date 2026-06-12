@@ -58,9 +58,13 @@ def export_tfds_resolved_clips_from_config(config_path: str | Path) -> dict[str,
         summary = _safe_stop_summary(f"tensorflow_datasets unavailable in TFDS env: {exc}", clip_cache_dir, max_windows)
         return _write_summary(summary, summary_path)
 
-    max_episode_index = max(_episode_index(window) for window in windows)
+    episode_indices = [_episode_index(window) for window in windows]
+    read_start_abs = int(config.get("clip_export", {}).get("read_start_abs", min(episode_indices)))
+    max_episode_index = max(episode_indices)
+    if read_start_abs > min(episode_indices):
+        raise ValueError("clip_export.read_start_abs cannot be after the first selected episode")
     builder = tfds.builder_from_directory(str(dataset_root))
-    read_instruction = tfds.core.ReadInstruction("train", from_=0, to=max_episode_index + 1, unit="abs")
+    read_instruction = tfds.core.ReadInstruction("train", from_=read_start_abs, to=max_episode_index + 1, unit="abs")
     dataset = builder.as_dataset(split=read_instruction, shuffle_files=False)
     selected_by_episode: dict[int, list[dict[str, Any]]] = {}
     for window in windows:
@@ -68,7 +72,8 @@ def export_tfds_resolved_clips_from_config(config_path: str | Path) -> dict[str,
 
     _prepare_clip_cache_dir(clip_cache_dir)
     records: list[dict[str, Any]] = []
-    for episode_index, episode in enumerate(dataset):
+    for local_episode_index, episode in enumerate(dataset):
+        episode_index = read_start_abs + local_episode_index
         episode_windows = selected_by_episode.get(episode_index, [])
         if not episode_windows:
             continue
