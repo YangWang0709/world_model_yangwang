@@ -1,0 +1,137 @@
+stage: bridgedata_v2_tfds_occlusion_teacher_step30b
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+input:
+  step30a_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1
+  token_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/token_manifest.jsonl
+  token_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/token_summary.json
+  token_smoke_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/token_smoke
+  proxy_importance_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/importance_manifest.jsonl
+  proxy_importance_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/importance_summary.json
+  proxy_importance_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/importance_smoke
+  multiseed_splits_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/multiseed_splits.json
+  stability_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/stability_summary.json
+  context_signal_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_window_diversity_step30a_v1/context_signal_decision.json
+
+data:
+  num_windows_expected: 64
+  token_shapes:
+    context: [16, 392, 768]
+    current: [4, 392, 768]
+    future: [4, 392, 768]
+    proxy_importance: [16, 392]
+
+teacher_training:
+  enabled: true
+  train_predictor_teacher: true
+  split_seed: 42
+  also_train_extra_seed_teachers_for_stability: true
+  extra_split_seeds: [123, 999]
+  train_separate_teacher_per_seed: true
+  model_type: current_conditioned_context_attention_predictor
+  token_dim: 768
+  hidden_dim: 512
+  context_scorer_hidden_dim: 256
+  use_current_conditioned_context_scores: true
+  context_pooling: learned_attention_weighted_sum
+  prediction_target: future_token_summary
+  loss: mse_to_future_summary
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0
+  train_steps: 600
+  train_batch_size: 8
+  eval_every: 50
+  grad_clip_norm: 1.0
+  device: cuda_if_available
+  allow_cpu_fallback: true
+  save_teacher_checkpoint: false
+  save_state_dict: false
+  teacher_result_not_final_performance: true
+
+occlusion:
+  enabled: true
+  method: trained_predictor_fixed_attention_zero_token_occlusion
+  target: context_tokens_only
+  current_tokens_kept_full: true
+  train_current_importance: false
+  output_shape: [16, 392]
+  occlusion_mode: zero_token_contribution
+  fixed_attention_weights: true
+  compute_delta_loss: true
+  loss: mse_to_future_summary
+  relu_delta: true
+  label_normalization: minmax_per_sample
+  generate_for_all_windows: true
+  max_windows: 64
+  occlusion_batch_size: 512
+  fallback_to_attention_weight_label_if_delta_degenerate: true
+
+teacher_label_eval:
+  compare_to_proxy_importance: true
+  compute_pearson: true
+  compute_spearman: true
+  compute_topk_overlap:
+    topk_values: [64, 128, 256, 512]
+  compute_mass_concentration: true
+  compute_temporal_spatial_summary: true
+  compute_label_stability_across_seed_teachers: true
+
+teacher_topk_utility:
+  enabled: true
+  train_tiny_predictor_for_teacher_topk: true
+  compare_policies:
+    - current_only
+    - random_context_topk
+    - proxy_importance_topk
+    - teacher_occlusion_topk
+    - full_context_reference
+  topk: 256
+  split_seeds: [42, 123, 999]
+  train_steps: 500
+  eval_every: 25
+  optimizer: adamw
+  learning_rate: 0.001
+  hidden_dim: 512
+  save_checkpoint: false
+  context_utility_claim_allowed: false
+
+guards:
+  no_new_data_download: true
+  no_new_tfds_shard_download: true
+  no_raw_zip_download: true
+  no_full_tfds_download: true
+  no_droid_download: true
+  no_model_download: true
+  no_token_extraction: true
+  no_proxy_importance_regeneration: true
+  allow_trained_predictor_teacher_training: true
+  allow_teacher_occlusion_label_generation: true
+  allow_teacher_topk_tiny_utility_training: true
+  no_videomae_training: true
+  no_context_teacher_large_training: true
+  no_selector_training: true
+  no_current_importance_training: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  no_large_token_shards: true
+  no_large_importance_shards: true
+  no_write_data_token_shards: true
+  no_write_data_importance_shards: true
+  keep_tensorflow_out_of_env_isaaclab: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tfds_occlusion_teacher_step30b_v1
+  teacher_train_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_train_summary.json
+  teacher_loss_curves_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_loss_curves.json
+  teacher_importance_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_importance_smoke
+  teacher_importance_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_importance_manifest.jsonl
+  teacher_importance_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_importance_summary.json
+  teacher_proxy_comparison_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_proxy_comparison.json
+  teacher_topk_utility_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_topk_utility.json
+  teacher_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/teacher_decision.json
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/occlusion_teacher_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_occlusion_teacher_step30b_v1/occlusion_teacher_eval.md
