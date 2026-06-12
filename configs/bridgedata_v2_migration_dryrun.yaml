@@ -1,0 +1,47 @@
+stage: bridgedata_v2_migration_dryrun_step19
+dataset_name: BridgeData V2
+dry_run_only: true
+no_download: true
+full_download_allowed: false
+large_download_allowed: false
+max_download_gb: 1.0
+
+official_sources:
+  - https://rail-berkeley.github.io/bridgedata/
+  - https://github.com/rail-berkeley/bridge_data_v2
+  - https://proceedings.mlr.press/v229/walke23a.html
+
+known_public_characteristics:
+  trajectory_count_approx: 60096
+  environments_approx: 24
+  image_observations_likely: true
+  actions_likely: true
+  goal_image_likely: true
+  language_instruction_likely: true
+  multicam_likely: null
+
+planned_mapping:
+  dataset_name: dataset_name
+  split: metadata split
+  trajectory_id: trajectory id
+  sample_id: generated from trajectory id and start frame
+  context_video: optional image window, not saved in Step19
+  current_video: optional image window, not saved in Step19
+  future_video: optional image window, not saved in Step19
+  actions: save as metadata first, do not train on actions
+  endeffector: save as metadata if present
+  language_instruction: save as metadata, no language encoder in Step20
+  goal_image: save as metadata, no goal encoder in Step20
+  camera_names: record available camera metadata
+
+recommended_initial_subset:
+  trajectories: 100 to 500
+  context_len: 16
+  current_len: 4
+  future_len: 4
+  image_size: 224
+  encoder: existing local VideoMAE first
+  no_action_input_initially: true
+  save_action_language_goal_as_metadata: true
+
+recommended_next_step: BridgeData V2 tiny-subset context window builder

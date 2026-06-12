@@ -1,0 +1,46 @@
+stage: droid_migration_dryrun_step19
+dataset_name: DROID
+dry_run_only: true
+no_download: true
+full_download_allowed: false
+large_download_allowed: false
+max_download_gb: 1.0
+
+official_sources:
+  - https://droid-dataset.github.io/
+  - https://droid-dataset.github.io/droid/the-droid-dataset
+  - https://github.com/droid-dataset/droid
+  - https://arxiv.org/abs/2403.12945
+
+known_public_characteristics:
+  trajectory_count_approx: 76000
+  interaction_hours_approx: 350
+  scenes_approx: 564
+  tasks_approx: 86
+  image_observations_likely: true
+  actions_likely: true
+  robot_state_likely: true
+  language_instruction_likely: true
+  multicam_likely: true
+
+planned_mapping:
+  dataset_name: dataset_name
+  split: metadata split
+  trajectory_id: episode id
+  sample_id: generated from episode id and start frame
+  context_video: optional multiview image window, not saved in Step19
+  current_video: optional multiview image window, not saved in Step19
+  future_video: optional multiview image window, not saved in Step19
+  actions: save as metadata first, do not train on actions
+  endeffector: save as metadata if present
+  language_instruction: save as metadata, no language encoder in Step20
+  goal_image: optional metadata if available
+  camera_names: record synchronized camera streams
+
+recommended_role:
+  first_local_migration_target: false
+  use_as_future_large_scale_validation: true
+  require_storage_planning: true
+  likely_cloud_or_external_disk_for_full_use: true
+
+recommended_next_step: Keep DROID as future large-scale validation after BridgeData V2 tiny-subset migration.

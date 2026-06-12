@@ -1,0 +1,107 @@
+stage: long_context_dataset_feasibility_step19
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+current_project_state:
+  step17_pass: true
+  step18_pass: true
+  step17_5_audit_pass: true
+  bair_context_limitations:
+    - BAIR context is short
+    - current-only is already competitive
+    - context importance labels are diffuse
+    - selector-level gains did not improve downstream MSE
+
+candidate_datasets:
+  - name: BridgeData V2
+    priority: high
+    expected_use: first long-context migration candidate
+    allow_full_download: false
+    allow_metadata_only: true
+    allow_tiny_sample_download: false
+    max_download_gb: 1.0
+    local_cache_candidates:
+      - /home/ubuntu22/tgpawb_world_model/data/bridgedata_v2
+      - /home/ubuntu22/tgpawb_world_model/data/bridge_data_v2
+      - /home/ubuntu22/tgpawb_world_model/datasets/bridgedata_v2
+
+  - name: DROID
+    priority: medium
+    expected_use: larger-scale future validation candidate
+    allow_full_download: false
+    allow_metadata_only: true
+    allow_tiny_sample_download: false
+    max_download_gb: 1.0
+    local_cache_candidates:
+      - /home/ubuntu22/tgpawb_world_model/data/droid
+      - /home/ubuntu22/tgpawb_world_model/datasets/droid
+
+optional_candidate_policy:
+  allow_listing_additional_open_datasets: true
+  do_not_switch_mainline_without_approval: true
+
+feasibility_questions:
+  - Can we construct context/current/future windows?
+  - Are trajectories long enough for context_len >= 16 or 32?
+  - Are multiple camera views available?
+  - Are goal image or language instruction fields available?
+  - Are actions available?
+  - Can actions be saved as metadata first without training on them?
+  - Can we build a small subset locally?
+  - What is the estimated disk requirement?
+  - What is the estimated preprocessing cost?
+  - Is official data access script stable and documented?
+  - Can we integrate with frozen VideoMAE first?
+  - Does the dataset support temporal/block-level context importance?
+
+window_design:
+  candidate_windows:
+    - name: short_context_control
+      context_len: 8
+      current_len: 4
+      future_len: 4
+    - name: medium_context
+      context_len: 16
+      current_len: 4
+      future_len: 4
+    - name: long_context
+      context_len: 32
+      current_len: 4
+      future_len: 8
+  image_size: 224
+  save_action_as_metadata: true
+  use_action_as_input: false
+  save_language_instruction_as_metadata: true
+  use_language_as_input: false
+  save_goal_image_as_metadata: true
+  use_goal_image_as_input: false
+
+selection_design:
+  current_tokens:
+    preserve_full_current: true
+    drop_current_tokens: false
+    train_current_importance: false
+
+  context_tokens:
+    compress_context: true
+    initial_context_topk_ratio: 0.04081632653061224
+
+  planned_importance_upgrade:
+    - token_level_occlusion_baseline
+    - temporal_block_importance
+    - frame_level_importance
+    - segment_level_importance
+    - spatial_block_importance
+
+local_resource_limits:
+  min_free_disk_gb: 120
+  max_download_gb: 1.0
+  no_full_dataset_download: true
+  no_training: true
+  no_model_download: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: long_context_dataset_feasibility_step19_v1
+  summary_json: /home/ubuntu22/tgpawb_world_model/runs/long_context_dataset_feasibility_step19_v1/long_context_dataset_feasibility_summary.json
+  summary_md: /home/ubuntu22/tgpawb_world_model/runs/long_context_dataset_feasibility_step19_v1/long_context_dataset_feasibility_summary.md
