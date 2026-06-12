@@ -1,0 +1,118 @@
+stage: bridgedata_v2_tfds_world_model_tiny_overfit_step27
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+input:
+  step24_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_token_extraction_step24_v1
+  token_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_token_extraction_step24_v1/tfds_token_smoke_manifest.jsonl
+  token_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_token_extraction_step24_v1/tfds_token_extraction_summary.json
+  token_smoke_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_token_extraction_step24_v1/token_smoke
+  step25_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_importance_step25_v1
+  importance_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_importance_step25_v1/tfds_importance_smoke_manifest.jsonl
+  importance_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_importance_step25_v1/tfds_importance_summary.json
+  importance_smoke_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_importance_step25_v1/importance_smoke
+  step26_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_smoke_step26_v1
+  step26_smoke_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_smoke_step26_v1/world_model_smoke_summary.json
+
+sample_limits:
+  max_samples: 4
+  batch_size: 4
+  shuffle: true
+
+token_shapes:
+  context: [16, 392, 768]
+  current: [4, 392, 768]
+  future: [4, 392, 768]
+  context_importance: [16, 392]
+
+context_bottleneck:
+  current_tokens_kept_full: true
+  train_current_importance: false
+  context_tokens_only: true
+  default_topk: 256
+  topk_values: [256]
+  retention_ratio_reference: 0.04081632653061224
+
+policies:
+  - name: current_only
+    use_context: false
+    topk: 0
+    train: true
+  - name: random_context_topk
+    use_context: true
+    selection: random
+    topk: 256
+    seed: 42
+    train: true
+  - name: proxy_importance_topk
+    use_context: true
+    selection: importance_topk
+    topk: 256
+    train: true
+  - name: full_context_reference
+    use_context: true
+    selection: full
+    topk: null
+    deployable: false
+    train: true
+
+tiny_overfit:
+  enabled: true
+  train_separate_model_per_policy: true
+  model_type: smoke_context_bottleneck_predictor
+  hidden_dim: 512
+  prediction_target: future_token_summary
+  loss: mse_to_future_summary
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0
+  train_steps: 300
+  eval_every: 25
+  grad_clip_norm: 1.0
+  device: cuda_if_available
+  allow_cpu_fallback: true
+  save_checkpoint: false
+  save_state_dict: false
+  random_init_result_not_scientific: true
+  tiny_overfit_result_not_final_performance: true
+
+acceptance:
+  require_all_losses_finite: true
+  require_loss_decrease: true
+  min_relative_loss_decrease: 0.01
+  min_policies_with_loss_decrease: 3
+  require_current_tokens_full: true
+  require_no_current_importance_training: true
+
+guards:
+  no_download: true
+  no_new_data_download: true
+  no_new_tfds_shard_download: true
+  no_model_download: true
+  no_token_extraction: true
+  no_importance_generation: true
+  allow_tiny_world_model_training: true
+  no_videomae_training: true
+  no_teacher_training: true
+  no_selector_training: true
+  no_current_importance_training: true
+  no_large_world_model_training: true
+  no_large_token_shards: true
+  no_large_importance_shards: true
+  no_write_data_token_shards: true
+  no_write_data_importance_shards: true
+  no_action_input: true
+  no_vlm: true
+  no_rl: true
+  keep_tensorflow_out_of_env_isaaclab: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1
+  training_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_training_summary.json
+  training_summary_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_training_summary.md
+  loss_curves_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_loss_curves.json
+  policy_comparison_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_policy_comparison.json
+  final_eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_final_eval.json
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_world_model_tiny_overfit_step27_v1/tiny_overfit_eval.md

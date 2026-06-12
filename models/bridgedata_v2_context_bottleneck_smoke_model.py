@@ -23,14 +23,19 @@ class BridgeDataContextBottleneckSmokePredictor(torch.nn.Module):
         )
         self.random_init_result_not_scientific = True
 
+    def forward_from_summaries(self, current_summary: torch.Tensor, context_summary: torch.Tensor) -> torch.Tensor:
+        current_summary = current_summary.detach().to(dtype=torch.float32)
+        context_summary = context_summary.detach().to(dtype=torch.float32)
+        features = torch.cat([current_summary, context_summary], dim=-1)
+        return self.net(features)
+
     def forward(self, current_tokens: torch.Tensor, selected_context_tokens: torch.Tensor) -> torch.Tensor:
         current_summary = current_tokens.detach().to(dtype=torch.float32).mean(dim=(0, 1))
         if selected_context_tokens.numel() == 0:
             context_summary = torch.zeros_like(current_summary)
         else:
             context_summary = selected_context_tokens.detach().to(dtype=torch.float32).mean(dim=0)
-        features = torch.cat([current_summary, context_summary], dim=0)
-        return self.net(features)
+        return self.forward_from_summaries(current_summary, context_summary)
 
 
 def forward_loss_for_policy(
