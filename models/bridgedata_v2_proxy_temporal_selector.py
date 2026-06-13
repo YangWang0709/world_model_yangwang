@@ -56,9 +56,40 @@ class ProxyTemporalSelectorHead(nn.Module):
                 raise ValueError("current_tokens are required when condition_on_current_summary=true")
             current = current_tokens.detach() if self.detach_token_inputs else current_tokens
             current_summary = self._current_summary(current)
-            temporal_features = temporal_features + self.current_proj(current_summary).unsqueeze(1)
+        else:
+            current_summary = None
+        return self.forward_temporal_features(temporal_features, current_summary=current_summary)
+
+    def forward_temporal_features(
+        self,
+        context_temporal_features: torch.Tensor,
+        *,
+        current_summary: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Score [B, T, D] temporal summaries without patch-level inputs."""
+
+        if context_temporal_features.ndim != 3:
+            raise ValueError(
+                f"context_temporal_features must be [B, T, D], got {tuple(context_temporal_features.shape)}"
+            )
+        if list(context_temporal_features.shape[1:]) != [self.context_frames, self.token_dim]:
+            raise ValueError(
+                "context_temporal_features must be "
+                f"[B, {self.context_frames}, {self.token_dim}], got {tuple(context_temporal_features.shape)}"
+            )
+        temporal_features = context_temporal_features
+        if self.detach_token_inputs:
+            temporal_features = temporal_features.detach()
+        temporal_features = temporal_features.to(dtype=torch.float32)
+        if self.condition_on_current_summary:
+            if current_summary is None:
+                raise ValueError("current_summary is required when condition_on_current_summary=true")
+            if current_summary.ndim != 2 or list(current_summary.shape[1:]) != [self.token_dim]:
+                raise ValueError(f"current_summary must be [B, {self.token_dim}], got {tuple(current_summary.shape)}")
+            current = current_summary.detach() if self.detach_token_inputs else current_summary
+            temporal_features = temporal_features + self.current_proj(current.to(dtype=torch.float32)).unsqueeze(1)
         scores = self.score_net(temporal_features).squeeze(-1)
-        if list(scores.shape) != [context.shape[0], self.context_frames]:
+        if list(scores.shape) != [context_temporal_features.shape[0], self.context_frames]:
             raise ValueError(f"selector scores shape {list(scores.shape)} is invalid")
         return scores
 
