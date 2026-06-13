@@ -1,0 +1,166 @@
+stage: bridgedata_v2_tfds_redesigned_label_selector_step40a
+project_root: /home/ubuntu22/tgpawb_world_model
+seed: 42
+
+input:
+  step39a_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_proxy_label_redesign_step39a_v1
+  step39a_label_redesign_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_proxy_label_redesign_step39a_v1/label_redesign_summary.json
+  step39a_label_variant_metrics_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_proxy_label_redesign_step39a_v1/label_variant_metrics.json
+  step39a_label_variant_comparison_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_proxy_label_redesign_step39a_v1/label_variant_comparison.json
+  step39a_gate_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_proxy_label_redesign_step39a_v1/step39a_gate_decision.json
+  step37_run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_factorized_selector_step37_v1
+  step37_gate_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_factorized_selector_step37_v1/step37_gate_decision.json
+  token_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_data_diversity_step33b_v1/token_manifest.jsonl
+  importance_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_data_diversity_step33b_v1/importance_manifest.jsonl
+  shard_splits_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_data_diversity_step33b_v1/shard_splits.json
+  shard0_token_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/token_manifest.jsonl
+  shard0_importance_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/importance_manifest.jsonl
+  shard0_horizon_window_manifest_jsonl: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/horizon_window_manifest.jsonl
+  shard0_horizon_splits_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_longer_horizon_step32_v1/horizon_splits.json
+
+data:
+  context_token_shape: [16, 392, 768]
+  current_token_shape: [4, 392, 768]
+  importance_shape: [16, 392]
+  context_frames: 16
+  spatial_tokens: 392
+  token_dim: 768
+  max_samples_per_shard: 64
+  use_action_as_input: false
+  use_language_as_input: false
+  load_future_tokens_for_selector: false
+
+label:
+  variant: global_spatial_prior_removed_residual
+  build_global_spatial_prior_from_train_split_only: true
+  apply_train_prior_to_val_split: true
+  clip_to_unit_range: true
+  do_not_save_label_tensor_artifacts: true
+
+model:
+  primary_variant: proxy_patch_token_selector_head
+  optional_factorized_variant: false
+  token_dim: 768
+  hidden_dim: 128
+  context_frames: 16
+  spatial_tokens: 392
+  condition_on_current_summary: true
+  use_temporal_embedding: true
+  use_spatial_embedding: true
+  dropout: 0.0
+  detach_token_inputs: true
+  freeze_videomae: true
+  train_video_encoder: false
+
+training:
+  enabled: true
+  bounded_smoke_training_only: true
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0
+  train_steps: 300
+  eval_every: 25
+  batch_size: 4
+  eval_batch_size: 4
+  grad_clip_norm: 1.0
+  device: cuda_if_available
+  allow_cpu_fallback: true
+  save_checkpoint: false
+  save_state_dict: false
+  allowed_optimizer_scopes:
+    - redesigned_label_proxy_selector_head_only
+
+loss:
+  primary_variant: mse_only
+  use_sigmoid_scores: true
+  rank_loss_enabled: false
+  topk_loss_enabled: false
+
+splits:
+  split_seeds: [42, 123, 999]
+  strict_shard_aware_splits: true
+  run_within_shard: true
+  run_cross_shard: true
+  run_mixed_shard: true
+  sample_id_disjoint: true
+  trajectory_disjoint_if_possible: true
+  no_language_leakage: true
+
+metrics:
+  compute_mse: true
+  compute_mae: true
+  compute_pearson: true
+  compute_spearman: true
+  compute_topk_token_overlap: true
+  compute_topk_precision_recall: true
+  compute_random_token_baseline: true
+  compute_uniform_or_mean_baseline: true
+  compute_temporal_broadcast_baseline: true
+  compute_train_global_spatial_prior_baseline: true
+  compute_overfit_gap: true
+  topk_values: [64, 128, 256, 512]
+  primary_topk: 256
+
+gate_requirements:
+  selector_beats_random_token_baseline: true
+  selector_beats_uniform_or_mean_baseline: true
+  selector_beats_temporal_broadcast_baseline: true
+  selector_beats_train_global_spatial_prior_baseline: true
+  selector_generalizes_cross_shard: true
+  top256_overlap_mean_min: 0.12
+  overfit_gap_max: 0.05
+  no_language_or_trajectory_leakage: true
+  no_checkpoint_saved: true
+  no_forbidden_training: true
+
+future_gates:
+  bounded_selector_smoke_allowed: true
+  bounded_selector_smoke_performed: false
+  redesigned_label_selector_smoke_pass: false
+  downstream_selector_use_allowed: false
+  final_selector_training_allowed: false
+  current_importance_training_allowed: false
+  context_utility_claim_allowed: false
+
+guards:
+  no_raw_zip_download: true
+  no_full_tfds_download: true
+  no_droid_download: true
+  no_open_x_embodiment_download: true
+  no_new_tfds_shard_download: true
+  no_new_data_download: true
+  no_new_model_download: true
+  no_new_pretrained_model_download: true
+  no_checkpoint_download: true
+  no_image_or_video_download: true
+  no_compressed_archive_download: true
+  use_existing_local_artifacts_only: true
+  no_checkpoint_save: true
+  no_state_dict_save: true
+  no_tensorflow_import_in_env_isaaclab: true
+  no_tensorflow_datasets_import_in_env_isaaclab: true
+  no_videomae_training: true
+  no_vjepa_training: true
+  no_vlm_training: true
+  no_world_model_training: true
+  no_downstream_task_training: true
+  no_rl: true
+  no_action_conditioned_model_training: true
+  no_final_selector_training: true
+  no_current_importance_training: true
+  no_action_input: true
+  no_language_input: true
+  no_future_token_input_to_selector: true
+  no_write_data_token_shards: true
+  no_write_data_importance_shards: true
+
+output:
+  run_root: /home/ubuntu22/tgpawb_world_model/runs
+  run_name: bridgedata_v2_tfds_redesigned_label_selector_step40a_v1
+  run_dir: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1
+  train_summary_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1/train_summary.json
+  loss_curves_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1/loss_curves.json
+  selector_metrics_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1/redesigned_label_selector_metrics.json
+  gate_decision_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1/step40a_gate_decision.json
+  eval_json: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1/step40a_eval.json
+  eval_md: /home/ubuntu22/tgpawb_world_model/runs/bridgedata_v2_tfds_redesigned_label_selector_step40a_v1/step40a_eval.md
